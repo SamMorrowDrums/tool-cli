@@ -1,0 +1,33 @@
+{
+  "name": "@sammorrowdrums/tool-cli",
+  "version": "0.1.0",
+  "description": "CLI for progressive MCP tool discovery via JSON-RPC",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/cli.js",
+  "bin": {
+    "tool-cli": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.6.0",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.0"
+  }
+}
