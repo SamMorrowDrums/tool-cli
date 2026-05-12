@@ -1,5 +1,5 @@
 import http from "node:http";
-import { resolvePort } from "./constants.js";
+import { generateToken } from "./constants.js";
 import type { ToolProvider, ToolInfo } from "./provider.js";
 
 interface JsonRpcRequest {
@@ -36,32 +36,35 @@ export interface ToolDetails {
   annotations?: Record<string, unknown>;
 }
 
+/** Result returned from `start()` — pass these to the agent as env vars. */
+export interface StartResult {
+  port: number;
+  token: string;
+}
+
 /**
  * JSON-RPC 2.0 server for progressive MCP tool discovery.
  *
  * Takes a `ToolProvider` — any implementation that can list servers,
  * list tools, describe tools, and call tools.
  *
- * Methods:
- * - listServers → server names + tool counts + random examples
- * - listTools(server) → tool names + descriptions
- * - describeTool(server, tool) → full schema
- * - callTool(server, tool, arguments) → execute and return result
+ * On `start()`, picks a random available port and generates a session
+ * token. Both are returned so the caller can set `TOOL_CLI_PORT` and
+ * `TOOL_CLI_TOKEN` as environment variables for agent subprocesses.
  */
 export class ToolCliServer {
   private server: http.Server | null = null;
-  private port: number;
+  private token: string = "";
 
-  constructor(
-    private provider: ToolProvider,
-    port?: number,
-  ) {
-    this.port = port ?? resolvePort();
-  }
+  constructor(private provider: ToolProvider) {}
 
-  /** Start the HTTP server. Resolves once listening. */
-  async start(log?: (msg: string) => void): Promise<void> {
-    if (this.server) return;
+  /** Start the HTTP server on a random port. Returns `{ port, token }`. */
+  async start(log?: (msg: string) => void): Promise<StartResult> {
+    if (this.server) {
+      return { port: this.getPort(), token: this.token };
+    }
+
+    this.token = generateToken();
 
     const MAX_BODY_SIZE = 1024 * 1024; // 1 MB
 
@@ -69,6 +72,14 @@ export class ToolCliServer {
       if (req.method !== "POST") {
         res.writeHead(405, { "Content-Type": "application/json" });
         res.end(JSON.stringify(rpcError(null, -32600, "Only POST accepted")));
+        return;
+      }
+
+      // Validate auth token
+      const auth = req.headers["authorization"];
+      if (!auth || auth !== `Bearer ${this.token}`) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Unauthorized" }));
         return;
       }
 
@@ -108,15 +119,16 @@ export class ToolCliServer {
       });
     });
 
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<StartResult>((resolve, reject) => {
       server.once("error", (err) => {
         this.server = null;
         reject(err);
       });
-      server.listen(this.port, "127.0.0.1", () => {
+      server.listen(0, "127.0.0.1", () => {
         this.server = server;
-        log?.(`[tool-cli] RPC server listening on 127.0.0.1:${this.port}`);
-        resolve();
+        const port = this.getPort();
+        log?.(`[tool-cli] RPC server listening on 127.0.0.1:${port}`);
+        resolve({ port, token: this.token });
       });
     });
   }
@@ -138,7 +150,7 @@ export class ToolCliServer {
       const addr = this.server.address();
       if (addr && typeof addr === "object") return addr.port;
     }
-    return this.port;
+    return 0;
   }
 
   private async handleBody(body: string): Promise<JsonRpcResponse> {

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { ToolCliServer } from "./server.js";
 import { rpcCall } from "./rpc-client.js";
 import type { ToolProvider, ToolInfo, CallToolResult } from "./provider.js";
+import { PORT_ENV_VAR, TOKEN_ENV_VAR } from "./constants.js";
 
 /**
  * In-memory ToolProvider for testing.
@@ -27,7 +28,6 @@ class MockProvider implements ToolProvider {
     tool: string,
     args: Record<string, unknown>,
   ): Promise<CallToolResult> {
-    // Echo tool: return args as structured content
     return {
       content: [{ type: "text", text: `Called ${tool}` }],
       structuredContent: { tool, args },
@@ -37,8 +37,8 @@ class MockProvider implements ToolProvider {
 
 describe("tool-cli server + client integration", () => {
   const provider = new MockProvider();
-  const server = new ToolCliServer(provider, 0); // port 0 = OS-assigned
-  let port: number;
+  const server = new ToolCliServer(provider);
+  let token: string;
 
   beforeAll(async () => {
     provider.addServer("test-server", [
@@ -64,14 +64,73 @@ describe("tool-cli server + client integration", () => {
 
     provider.addServer("empty-server", []);
 
-    await server.start();
-    port = server.getPort();
-    process.env.TOOL_CLI_PORT = String(port);
+    const result = await server.start();
+    token = result.token;
+    process.env[PORT_ENV_VAR] = String(result.port);
+    process.env[TOKEN_ENV_VAR] = result.token;
   });
 
   afterAll(async () => {
     await server.stop();
-    delete process.env.TOOL_CLI_PORT;
+    delete process.env[PORT_ENV_VAR];
+    delete process.env[TOKEN_ENV_VAR];
+  });
+
+  describe("authentication", () => {
+    it("rejects requests without a token", async () => {
+      const port = server.getPort();
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "listServers", id: 1 }),
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects requests with a wrong token", async () => {
+      const port = server.getPort();
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer wrong-token",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "listServers", id: 1 }),
+      });
+      expect(res.status).toBe(401);
+    });
+
+    it("accepts requests with the correct token", async () => {
+      const port = server.getPort();
+      const res = await fetch(`http://127.0.0.1:${port}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "listServers", id: 1 }),
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("client sends token from TOOL_CLI_TOKEN env", async () => {
+      // rpcCall reads TOOL_CLI_TOKEN from env (set in beforeAll)
+      const result = (await rpcCall("listServers")) as { servers: unknown[] };
+      expect(result.servers).toBeDefined();
+    });
+  });
+
+  describe("start() returns port and token", () => {
+    it("returns a valid port number", () => {
+      const port = server.getPort();
+      expect(port).toBeGreaterThan(0);
+      expect(port).toBeLessThan(65536);
+    });
+
+    it("returns a non-empty token", () => {
+      expect(token).toBeTruthy();
+      expect(token.length).toBeGreaterThanOrEqual(32);
+    });
   });
 
   describe("listServers", () => {
