@@ -39,7 +39,7 @@ Errors go to stderr with exit code 1 — safe for `&&` chaining and `set -e` scr
 
 ## Package Structure
 
-The package has three entry points that can be consumed independently:
+Three entry points, consumable independently:
 
 ```typescript
 // Everything (server + client + types)
@@ -88,7 +88,6 @@ const provider: ToolProvider = {
 
 const server = new ToolCliServer(provider);
 await server.start();
-// tool-cli CLI and any JSON-RPC client can now talk to it
 ```
 
 The full interface:
@@ -121,9 +120,114 @@ interface CallToolResult {
 
 ---
 
+## Implementing a Server
+
+The `ToolProvider` interface is intentionally minimal — three methods. Here's guidance for different integration scenarios:
+
+### MCP SDK (TypeScript/JavaScript)
+
+If you're using `@modelcontextprotocol/sdk`, the provider wraps your `Client` instances:
+
+```typescript
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+
+class McpToolProvider implements ToolProvider {
+  private clients = new Map<string, { client: Client; tools: ToolInfo[] }>();
+
+  getServerNames() {
+    return [...this.clients.keys()];
+  }
+  getTools(server) {
+    return this.clients.get(server)?.tools ?? [];
+  }
+  async callTool(server, tool, args) {
+    const { client } = this.clients.get(server)!;
+    const result = await client.callTool({ name: tool, arguments: args });
+    return {
+      content: result.content as unknown[],
+      structuredContent: result.structuredContent as
+        | Record<string, unknown>
+        | undefined,
+    };
+  }
+}
+```
+
+### Other languages — implement the JSON-RPC server directly
+
+You don't need this package to run a tool-cli compatible server. The protocol is 4 JSON-RPC methods over HTTP. Implement them in any language:
+
+**Go:**
+
+```go
+// Skeleton — handle POST to :7179, dispatch by method
+func handleRPC(w http.ResponseWriter, r *http.Request) {
+    var req struct {
+        Method string          `json:"method"`
+        Params json.RawMessage `json:"params"`
+        ID     int             `json:"id"`
+    }
+    json.NewDecoder(r.Body).Decode(&req)
+
+    switch req.method {
+    case "listServers":  // return { servers: [...] }
+    case "listTools":    // parse server from params, return tools
+    case "describeTool": // parse server+tool, return schema
+    case "callTool":     // parse server+tool+arguments, call MCP, return result
+    }
+}
+```
+
+**Python (Flask):**
+
+```python
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+@app.route("/", methods=["POST"])
+def rpc():
+    req = request.json
+    method = req["method"]
+    params = req.get("params", {})
+
+    if method == "listServers":
+        result = {"servers": [{"name": "my-server", "toolCount": 5, "examples": ["search"]}]}
+    elif method == "listTools":
+        result = {"server": params["server"], "tools": [...]}
+    elif method == "describeTool":
+        result = {"name": params["tool"], "description": "...", "inputSchema": {...}}
+    elif method == "callTool":
+        result = call_mcp_tool(params["server"], params["tool"], params.get("arguments", {}))
+    else:
+        return jsonify({"jsonrpc": "2.0", "error": {"code": -32601, "message": "Not found"}, "id": req["id"]})
+
+    return jsonify({"jsonrpc": "2.0", "result": result, "id": req["id"]})
+
+app.run(port=7179, host="127.0.0.1")
+```
+
+**Rust:**
+
+```rust
+// Use axum, actix-web, or any HTTP framework
+// Parse JSON-RPC request, match on method, return JSON-RPC response
+// The 4 methods map directly to your MCP client's list/describe/call operations
+```
+
+### Key implementation notes
+
+- **Bind to `127.0.0.1` only** — the server should not be exposed to the network without authentication
+- **`TOOL_CLI_PORT` env var** — honour this so the CLI can find your server on non-default ports
+- **`structuredContent`** — if the MCP tool returns structured output, include it alongside `content`. The CLI prefers it for JSON piping
+- **Error responses** — use JSON-RPC error codes: `-32602` for invalid params, `-32601` for unknown methods, `-32603` for internal errors
+- **Tool annotations** — include `readOnlyHint`, `destructiveHint` etc. in `describeTool` responses. Future HITL gating will use these
+
+---
+
 ## Writing Clients in Other Languages
 
-The JSON-RPC interface is language-agnostic. Any HTTP client can talk to the server:
+The CLI is a convenience — the real API is JSON-RPC over HTTP, callable from any language:
 
 ```python
 import requests
@@ -164,6 +268,8 @@ Currently no authentication — the server accepts any request from localhost. F
 - Shared secret token (e.g. via `TOOL_CLI_TOKEN` env var)
 - Dynamic port allocation with port file
 - TLS for non-localhost deployments
+
+See [#1](https://github.com/SamMorrowDrums/tool-cli/issues/1) for resource discovery support.
 
 ## License
 
