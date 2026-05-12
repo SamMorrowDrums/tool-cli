@@ -261,12 +261,35 @@ The server listens at `http://127.0.0.1:7179` (override with `TOOL_CLI_PORT` env
 
 ---
 
-## Security (TODO)
+## Security
 
-Currently no authentication — the server accepts any request from localhost. Future work:
+The server uses token-based authentication and dynamic port allocation:
 
-- Shared secret token (e.g. via `TOOL_CLI_TOKEN` env var)
-- Dynamic port allocation with port file
+1. `start()` binds to a random available port and generates a 32-byte session token
+2. Returns `{ port, token }` — the caller sets these as `TOOL_CLI_PORT` and `TOOL_CLI_TOKEN` env vars for agent subprocesses
+3. Every request must include `Authorization: Bearer <token>` — rejected with 401 otherwise
+
+This means:
+
+- **Concurrent sessions** work — each gets its own port + token
+- **Random processes can't call tools** — they don't have the token
+- **Cross-session isolation** — one agent can't reach another's tools
+
+### Integration with agent harnesses
+
+The harness (e.g. mcpi-ext) wires it up:
+
+```typescript
+const { port, token } = await server.start();
+// Set env vars so agent-spawned bash/tool-cli can authenticate
+pi.setEnv("TOOL_CLI_PORT", String(port));
+pi.setEnv("TOOL_CLI_TOKEN", token);
+```
+
+The CLI and `rpcCall()` client read both from environment automatically.
+
+### TODO
+
 - TLS for non-localhost deployments
 
 See [#1](https://github.com/SamMorrowDrums/tool-cli/issues/1) for resource discovery support.
