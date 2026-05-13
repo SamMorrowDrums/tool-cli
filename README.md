@@ -114,7 +114,7 @@ flowchart LR
 
 Every call — whether from the CLI, from a programmatic client, or from sandboxed code — routes back through the harness. This gives you:
 
-- **Full observability** — every tool invocation appears in the agent log, regardless of how it was initiated
+- **Agent activity logging preserved** — because calls flow through the harness, not around it, the existing agent audit trail captures every tool invocation. Nothing bypasses the log
 - **Human-in-the-loop at one point** — the harness can check tool annotations (`readOnlyHint`, `destructiveHint`) and gate destructive calls through user confirmation
 - **No special setup** — the harness already manages MCP connections. tool-cli just gives the agent shell access to them
 
