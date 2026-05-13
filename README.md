@@ -65,7 +65,7 @@ Errors go to stderr with exit code 1 — safe for `&&` chaining and `set -e` scr
 
 ## Security — The Dual Lock
 
-> _They pass the Football from hand to hand. It is heavy with potential. Every tool on every server is one command away — but you must type the command yourself._
+> _They pass the Football to the terminal. It is heavy with potential. Every tool on every server is one command away — but to trigger the tool, the harness must allow it._
 
 The server uses token-based authentication and dynamic port allocation:
 
@@ -79,10 +79,6 @@ This means:
 - **Random processes can't call tools** — they don't have the token
 - **Cross-session isolation** — one agent can't reach another's tools
 - **No individual actor goes rogue** — the agent has reach, the harness has authority. Both must agree for the launch to proceed
-
-### TODO
-
-- TLS for non-localhost deployments
 
 See [#1](https://github.com/SamMorrowDrums/tool-cli/issues/1) for resource discovery support.
 
