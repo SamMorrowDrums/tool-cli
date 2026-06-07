@@ -1,4 +1,4 @@
-import { resolvePort, resolveToken } from "./constants.js";
+import { resolveHost, resolvePort, resolveToken } from "./constants.js";
 
 interface JsonRpcResponse {
   jsonrpc: "2.0";
@@ -17,7 +17,8 @@ export async function rpcCall(
   params: Record<string, unknown> = {},
 ): Promise<unknown> {
   const port = resolvePort();
-  const url = `http://127.0.0.1:${port}`;
+  const host = resolveHost();
+  const url = `http://${host}:${port}`;
   const token = resolveToken();
 
   const headers: Record<string, string> = {

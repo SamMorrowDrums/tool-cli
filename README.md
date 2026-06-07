@@ -123,6 +123,28 @@ pi.setEnv("TOOL_CLI_TOKEN", token);
 
 The CLI and `rpcCall()` client read both from environment automatically.
 
+### Sandboxed / cross-host setups
+
+By default the server binds on `127.0.0.1` and the client connects to `127.0.0.1` — keeping everything on a single loopback. If you're running the agent (which invokes `tool-cli`) inside a container or VM while the harness server runs on the host, the two `127.0.0.1`s refer to different network namespaces and the connection will fail. Two env vars override the host on each side:
+
+| Var                 | Side   | Default     | Use when                                                                      |
+| ------------------- | ------ | ----------- | ----------------------------------------------------------------------------- |
+| `TOOL_CLI_BIND_HOST` | server | `127.0.0.1` | the server needs to listen on a non-loopback interface (e.g. `0.0.0.0`)       |
+| `TOOL_CLI_HOST`      | client | `127.0.0.1` | the client needs to reach the server at a different address                   |
+
+```sh
+# Host: bind on all interfaces so the container can reach in
+TOOL_CLI_BIND_HOST=0.0.0.0 your-harness
+
+# Container: point the CLI/client at the host
+TOOL_CLI_HOST=host.docker.internal \
+TOOL_CLI_PORT=… \
+TOOL_CLI_TOKEN=… \
+  tool-cli github search_code '{"query":"auth"}'
+```
+
+The bearer-token check still applies on every request — exposing the bind host beyond the loopback only widens reachability, not the auth model. Make sure the surrounding network is appropriately sandboxed.
+
 ---
 
 ## Package Structure
