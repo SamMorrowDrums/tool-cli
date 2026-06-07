@@ -1,5 +1,5 @@
 import http from "node:http";
-import { generateToken } from "./constants.js";
+import { generateToken, resolveBindHost } from "./constants.js";
 import type { ToolProvider, ToolInfo } from "./provider.js";
 
 interface JsonRpcRequest {
@@ -124,10 +124,11 @@ export class ToolCliServer {
         this.server = null;
         reject(err);
       });
-      server.listen(0, "127.0.0.1", () => {
+      const bindHost = resolveBindHost();
+      server.listen(0, bindHost, () => {
         this.server = server;
         const port = this.getPort();
-        log?.(`[tool-cli] RPC server listening on 127.0.0.1:${port}`);
+        log?.(`[tool-cli] RPC server listening on ${bindHost}:${port}`);
         resolve({ port, token: this.token });
       });
     });
