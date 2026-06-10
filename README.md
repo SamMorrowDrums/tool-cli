@@ -61,6 +61,37 @@ tool-cli github list_issues '{"repo":"owner/repo"}' --out /tmp/issues.json
 
 Errors go to stderr with exit code 1 — safe for `&&` chaining and `set -e` scripts.
 
+### Resources
+
+MCP resources and resource templates are reachable through the `resource`
+subcommand group, multi-server by default. (`resource` is a reserved word, so a
+server literally named `resource` is unsupported — acceptable here.)
+
+```sh
+tool-cli resource list                               # List resources across ALL servers, grouped by server
+tool-cli resource list --server github               # List one server's resources
+tool-cli resource templates                          # List resource templates (all servers)
+tool-cli resource templates --server github          # List one server's templates
+
+tool-cli resource read --server github --uri "file:///readme.md"          # Print text to stdout
+tool-cli resource read --server github --uri "asset://logo" --out logo.png # Write body to a file
+tool-cli resource read --server github --uri "asset://logo" --meta         # Metadata only
+tool-cli resource read --server github --uri "file:///readme.md" --json    # Machine-readable
+```
+
+Behaviour notes:
+
+- **Multi-server:** `list` / `templates` with no `--server` query every connected server and group the output by server, mirroring how bare `tool-cli` lists servers.
+- **Server resolution for `read`:** if exactly one server is connected, `--server` is optional; with multiple servers it is required (the error lists the connected server names).
+- **Binary content:** a base64 `blob` is never dumped to stdout — read prints metadata and tells you to pass `--out <path>`, which writes the decoded raw bytes.
+- **`--out`:** writes the body to the file (text as-is, binary decoded) and prints a one-line metadata summary plus the path instead of the body — parallels `--out` for large tool results.
+- Resources are read-only; no HITL gating is involved.
+
+Providers that don't implement resources keep working as tools-only — the new
+`ToolProvider` methods (`listResources`, `listResourceTemplates`,
+`readResource`) are optional, and the server returns a friendly
+"does not support resources" error when they're absent.
+
 ---
 
 ## Security — The Dual Lock
@@ -80,7 +111,7 @@ This means:
 - **Cross-session isolation** — one agent can't reach another's tools
 - **No individual actor goes rogue** — the agent has reach, the harness has authority. Both must agree for the launch to proceed
 
-See [#1](https://github.com/SamMorrowDrums/tool-cli/issues/1) for resource discovery support.
+Resource discovery ([#1](https://github.com/SamMorrowDrums/tool-cli/issues/1)) is supported — see [Resources](#resources) above.
 
 ---
 

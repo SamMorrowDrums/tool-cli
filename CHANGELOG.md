@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.5.0
+
+### Added
+
+- First-class **MCP resource support**, fully multi-server ([#1](https://github.com/SamMorrowDrums/tool-cli/issues/1)).
+  - New optional `ToolProvider` methods — `listResources()`, `listResourceTemplates()`, `readResource()` — thin, faithful mappings of MCP `resources/list`, `resources/templates/list`, and `resources/read`. New exported types: `ResourceInfo`, `ResourceTemplateInfo`, `ReadResourceContent`, `ReadResourceResult`.
+  - New JSON-RPC methods `listResources`, `listResourceTemplates`, `readResource`, mirroring how `callTool` is wired. Providers that don't implement a resource method get a structured, friendly "does not support resources" error.
+  - New CLI `resource` subcommand group:
+    - `tool-cli resource list [--server <name>] [--json]`
+    - `tool-cli resource templates [--server <name>] [--json]`
+    - `tool-cli resource read --server <name> --uri <uri> [--out <path>] [--meta] [--json]`
+  - With no `--server`, `list`/`templates` query all connected servers, grouped by server. `read` defaults to the sole server when only one is connected, and requires `--server` (listing the connected names) when multiple are connected.
+  - Binary `blob` content is never dumped to stdout — `read` prints metadata and directs you to `--out`, which writes the base64-decoded raw bytes. `--out` for text prints a one-line summary instead of the body, paralleling `--out` for large tool results.
+
+### Notes
+
+- Purely additive and backward-compatible — the new provider methods are optional, so existing tools-only providers keep compiling and working unchanged. Existing tool grammar (`tool-cli <server> <tool> …`) is untouched.
+- `resource` is a reserved subcommand word; a server literally named `resource` is unsupported (acceptable for this project's use).
+
 ## 0.4.0
 
 ### Added
