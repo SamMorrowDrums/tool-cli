@@ -7,6 +7,12 @@ export type {
   StartResult,
 } from "./server.js";
 export type { ToolProvider, ToolInfo, CallToolResult } from "./provider.js";
+export type {
+  ResourceInfo,
+  ResourceTemplateInfo,
+  ReadResourceContent,
+  ReadResourceResult,
+} from "./provider.js";
 export {
   DEFAULT_PORT,
   PORT_ENV_VAR,

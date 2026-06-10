@@ -1,6 +1,12 @@
 import http from "node:http";
 import { generateToken, resolveBindHost } from "./constants.js";
-import type { ToolProvider, ToolInfo } from "./provider.js";
+import type {
+  ToolProvider,
+  ToolInfo,
+  ResourceInfo,
+  ResourceTemplateInfo,
+  ReadResourceResult,
+} from "./provider.js";
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -189,6 +195,12 @@ export class ToolCliServer {
         return this.describeTool(params);
       case "callTool":
         return this.callTool(params);
+      case "listResources":
+        return this.listResources(params);
+      case "listResourceTemplates":
+        return this.listResourceTemplates(params);
+      case "readResource":
+        return this.readResource(params);
       default:
         throw new RpcMethodError(-32601, `Method not found: ${method}`);
     }
@@ -261,11 +273,68 @@ export class ToolCliServer {
     return this.provider.callTool(server, toolName, toolArgs);
   }
 
+  private async listResources(
+    params: Record<string, unknown>,
+  ): Promise<{ server: string; resources: ResourceInfo[] }> {
+    const server = requireString(params, "server");
+    this.assertResourcesSupported(server);
+    this.assertServerExists(server);
+    const resources = await this.provider.listResources!(server);
+    return { server, resources };
+  }
+
+  private async listResourceTemplates(
+    params: Record<string, unknown>,
+  ): Promise<{ server: string; templates: ResourceTemplateInfo[] }> {
+    const server = requireString(params, "server");
+    this.assertTemplatesSupported(server);
+    this.assertServerExists(server);
+    const templates = await this.provider.listResourceTemplates!(server);
+    return { server, templates };
+  }
+
+  private async readResource(
+    params: Record<string, unknown>,
+  ): Promise<ReadResourceResult> {
+    const server = requireString(params, "server");
+    const uri = requireString(params, "uri");
+    this.assertReadSupported(server);
+    this.assertServerExists(server);
+    return this.provider.readResource!(server, uri);
+  }
+
   private assertServerExists(server: string): void {
     if (!this.provider.getServerNames().includes(server)) {
       throw new RpcMethodError(
         -32602,
         `Server "${server}" not found. Connected: ${this.provider.getServerNames().join(", ") || "(none)"}`,
+      );
+    }
+  }
+
+  private assertResourcesSupported(server: string): void {
+    if (typeof this.provider.listResources !== "function") {
+      throw new RpcMethodError(
+        -32601,
+        `Server "${server}": this provider does not support resources (listResources not implemented)`,
+      );
+    }
+  }
+
+  private assertTemplatesSupported(server: string): void {
+    if (typeof this.provider.listResourceTemplates !== "function") {
+      throw new RpcMethodError(
+        -32601,
+        `Server "${server}": this provider does not support resource templates (listResourceTemplates not implemented)`,
+      );
+    }
+  }
+
+  private assertReadSupported(server: string): void {
+    if (typeof this.provider.readResource !== "function") {
+      throw new RpcMethodError(
+        -32601,
+        `Server "${server}": this provider does not support resources (readResource not implemented)`,
       );
     }
   }

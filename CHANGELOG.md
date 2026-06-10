@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.6.1
+
+### Changed
+
+- `resource read` now **refuses `skill://` URIs** — it returns an error without
+  contacting the server, so skill bodies can't be read through the generic
+  resource surface. (`resource list` already hides `skill://`.)
+
+## 0.6.0
+
+### Changed
+
+- `resource read` refinements (the resource feature from 0.5.0 is still unreleased — this supersedes it):
+  - The resource URI is now a **positional** argument: `tool-cli resource read [--server <name>] <uri> [--out <path>]`. `--uri <uri>` is still accepted as an alias.
+  - **Binary content now requires `--out`.** Reading a base64 `blob` without `--out` is a hard error (exit 1, message on stderr) — tool-cli refuses to write raw binary to stdout. Text still streams to stdout by default (pipeable/greppable).
+  - `resource list` now **hides `skill://` URIs** — skills are a separate channel.
+
+## 0.5.0
+
+### Added
+
+- First-class **MCP resource support**, fully multi-server ([#1](https://github.com/SamMorrowDrums/tool-cli/issues/1)).
+  - New optional `ToolProvider` methods — `listResources()`, `listResourceTemplates()`, `readResource()` — thin, faithful mappings of MCP `resources/list`, `resources/templates/list`, and `resources/read`. New exported types: `ResourceInfo`, `ResourceTemplateInfo`, `ReadResourceContent`, `ReadResourceResult`.
+  - New JSON-RPC methods `listResources`, `listResourceTemplates`, `readResource`, mirroring how `callTool` is wired. Providers that don't implement a resource method get a structured, friendly "does not support resources" error.
+  - New CLI `resource` subcommand group:
+    - `tool-cli resource list [--server <name>] [--json]`
+    - `tool-cli resource templates [--server <name>] [--json]`
+    - `tool-cli resource read --server <name> --uri <uri> [--out <path>] [--meta] [--json]`
+  - With no `--server`, `list`/`templates` query all connected servers, grouped by server. `read` defaults to the sole server when only one is connected, and requires `--server` (listing the connected names) when multiple are connected.
+  - Binary `blob` content is never dumped to stdout — `read` prints metadata and directs you to `--out`, which writes the base64-decoded raw bytes. `--out` for text prints a one-line summary instead of the body, paralleling `--out` for large tool results.
+
+### Notes
+
+- Purely additive and backward-compatible — the new provider methods are optional, so existing tools-only providers keep compiling and working unchanged. Existing tool grammar (`tool-cli <server> <tool> …`) is untouched.
+- `resource` is a reserved subcommand word; a server literally named `resource` is unsupported (acceptable for this project's use).
+
 ## 0.4.0
 
 ### Added
