@@ -272,7 +272,7 @@ async function handleResource(
       await resourceList(flags, "templates");
       return;
     case "read":
-      await resourceRead(flags);
+      await resourceRead(flags, args[1]);
       return;
     default:
       throw new Error(
@@ -291,11 +291,14 @@ function resourceHelp(): void {
     "  tool-cli resource templates [--server <name>] [--json]   List resource templates",
   );
   console.log(
-    "  tool-cli resource read --server <name> --uri <uri> [--out <path>] [--meta] [--json]",
+    "  tool-cli resource read [--server <name>] <uri> [--out <path>] [--meta] [--json]",
   );
   console.log("");
   console.log(
     "With no --server, list/templates query ALL connected servers, grouped by server.",
+  );
+  console.log(
+    "read streams text to stdout; binary content requires --out. skill:// URIs are hidden from list.",
   );
 }
 
@@ -348,7 +351,14 @@ async function resourceList(
         | ResourceInfo
         | ResourceTemplateInfo
       )[];
-      entries.push({ server: s, items });
+      // Skills are a separate channel — never surface skill:// resources here.
+      const visible =
+        kind === "templates"
+          ? items
+          : items.filter(
+              (i) => !((i as ResourceInfo).uri ?? "").startsWith("skill://"),
+            );
+      entries.push({ server: s, items: visible });
     } catch (err) {
       entries.push({
         server: s,
@@ -445,12 +455,15 @@ function buildResourceBuffer(contents: ReadResourceContent[]): Buffer {
   return Buffer.concat(parts);
 }
 
-async function resourceRead(flags: ResourceFlags): Promise<void> {
-  if (!flags.uri) {
-    throw new Error("resource read requires --uri <uri>");
+async function resourceRead(
+  flags: ResourceFlags,
+  positionalUri?: string,
+): Promise<void> {
+  const uri = positionalUri ?? flags.uri;
+  if (!uri) {
+    throw new Error("resource read requires a <uri> (positional or --uri)");
   }
   const server = await resolveServer(flags.server);
-  const uri = flags.uri;
 
   const result = (await rpcCall("readResource", {
     server,
@@ -494,13 +507,16 @@ async function resourceRead(flags: ResourceFlags): Promise<void> {
     return;
   }
 
-  // --json without --out → full machine-readable result (may include blobs)
+  // --json without --out → machine-readable result. Binary still requires
+  // --out so we never stream raw bytes (even base64) as the body channel.
   if (flags.json) {
+    assertNoBinaryWithoutOut(contents);
     console.log(JSON.stringify(result, null, 2));
     return;
   }
 
-  // Default: print text to stdout; refuse to dump binary blobs
+  // Default: stream text to stdout. Binary content REQUIRES --out.
+  assertNoBinaryWithoutOut(contents);
   const multiple = contents.length > 1;
   for (const c of contents) {
     if (typeof c.text === "string") {
@@ -508,14 +524,21 @@ async function resourceRead(flags: ResourceFlags): Promise<void> {
         console.log(`# ${c.uri} (${c.mimeType ?? "text"})`);
       }
       console.log(c.text);
-    } else if (c.blob) {
-      const bytes = Buffer.from(c.blob, "base64").length;
-      console.log(
-        `# ${c.uri} [${c.mimeType ?? "application/octet-stream"}] binary, ${bytes} bytes`,
-      );
-      console.log("Binary content not printed. Pass --out <path> to save it.");
     }
   }
+}
+
+/**
+ * Throw a clear error if any content is binary (a base64 blob) — binary
+ * content must be saved with `--out`, never dumped to stdout.
+ */
+function assertNoBinaryWithoutOut(contents: ReadResourceContent[]): void {
+  const binary = contents.find((c) => typeof c.text !== "string" && c.blob);
+  if (!binary) return;
+  const bytes = Buffer.from(binary.blob as string, "base64").length;
+  throw new Error(
+    `resource "${binary.uri}" is binary (${binary.mimeType ?? "application/octet-stream"}, ${bytes} bytes) — pass --out <path> to save it; refusing to write binary to stdout`,
+  );
 }
 
 /** Build the output string from structured or raw content. */

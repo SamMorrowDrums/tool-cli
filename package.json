@@ -1,6 +1,6 @@
 {
   "name": "@sammorrowdrums/tool-cli",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "CLI and server for progressive MCP tool discovery via JSON-RPC",
   "license": "MIT",
   "type": "module",

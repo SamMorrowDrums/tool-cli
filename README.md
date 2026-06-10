@@ -73,18 +73,22 @@ tool-cli resource list --server github               # List one server's resourc
 tool-cli resource templates                          # List resource templates (all servers)
 tool-cli resource templates --server github          # List one server's templates
 
-tool-cli resource read --server github --uri "file:///readme.md"          # Print text to stdout
-tool-cli resource read --server github --uri "asset://logo" --out logo.png # Write body to a file
-tool-cli resource read --server github --uri "asset://logo" --meta         # Metadata only
-tool-cli resource read --server github --uri "file:///readme.md" --json    # Machine-readable
+tool-cli resource read --server github "file:///readme.md"                  # Print text to stdout (pipeable)
+tool-cli resource read --server github "file:///readme.md" | grep foo       # Stream + grep
+tool-cli resource read --server github "asset://logo" --out logo.png        # Write body to a file
+tool-cli resource read --server github "asset://logo" --meta                # Metadata only
+tool-cli resource read --server github "file:///readme.md" --json           # Machine-readable
 ```
 
 Behaviour notes:
 
 - **Multi-server:** `list` / `templates` with no `--server` query every connected server and group the output by server, mirroring how bare `tool-cli` lists servers.
 - **Server resolution for `read`:** if exactly one server is connected, `--server` is optional; with multiple servers it is required (the error lists the connected server names).
-- **Binary content:** a base64 `blob` is never dumped to stdout — read prints metadata and tells you to pass `--out <path>`, which writes the decoded raw bytes.
+- **`<uri>` is positional** (`resource read --server <name> <uri>`); `--uri <uri>` is still accepted as an alias.
+- **Text streams to stdout** by default — pipeable and greppable.
+- **Binary content requires `--out`:** a base64 `blob` is never written to stdout — `read` errors (exit 1) and tells you to pass `--out <path>`, which writes the decoded raw bytes.
 - **`--out`:** writes the body to the file (text as-is, binary decoded) and prints a one-line metadata summary plus the path instead of the body — parallels `--out` for large tool results.
+- **`skill://` URIs are hidden from `resource list`** — skills are a separate channel.
 - Resources are read-only; no HITL gating is involved.
 
 Providers that don't implement resources keep working as tools-only — the new

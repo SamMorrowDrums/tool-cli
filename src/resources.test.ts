@@ -243,6 +243,11 @@ describe("resource CLI grammar", () => {
           name: "Readme",
           mimeType: "text/markdown",
         },
+        {
+          uri: "skill://weather/SKILL.md",
+          name: "Weather skill",
+          mimeType: "text/markdown",
+        },
       ],
       templates: [
         { uriTemplate: "file:///logs/{date}.log", name: "Daily log" },
@@ -300,6 +305,26 @@ describe("resource CLI grammar", () => {
     expect(stdout).toContain("docs —");
     expect(stdout).toContain("file:///readme.md");
     expect(stdout).not.toContain("asset://logo");
+    expect(stdout).not.toContain("skill://");
+  });
+
+  it("resource list hides skill:// URIs (separate channel)", async () => {
+    const human = await runCli(["resource", "list", "--server", "docs"], env);
+    expect(human.stdout).toContain("file:///readme.md");
+    expect(human.stdout).not.toContain("skill://weather/SKILL.md");
+
+    const json = await runCli(
+      ["resource", "list", "--server", "docs", "--json"],
+      env,
+    );
+    expect(json.stdout).not.toContain("skill://");
+    const parsed = JSON.parse(json.stdout) as {
+      server: string;
+      resources?: ResourceInfo[];
+    }[];
+    const uris = parsed[0].resources?.map((r) => r.uri) ?? [];
+    expect(uris).toContain("file:///readme.md");
+    expect(uris.some((u) => u.startsWith("skill://"))).toBe(false);
   });
 
   it("resource list with no --server groups across all servers", async () => {
@@ -331,7 +356,16 @@ describe("resource CLI grammar", () => {
     expect(docs?.resources?.[0].uri).toBe("file:///readme.md");
   });
 
-  it("resource read prints text to stdout", async () => {
+  it("resource read prints text to stdout (positional uri)", async () => {
+    const { stdout, code } = await runCli(
+      ["resource", "read", "--server", "docs", "file:///readme.md"],
+      env,
+    );
+    expect(code).toBe(0);
+    expect(stdout).toContain("# Hello");
+  });
+
+  it("resource read still accepts --uri as an alias", async () => {
     const { stdout, code } = await runCli(
       ["resource", "read", "--server", "docs", "--uri", "file:///readme.md"],
       env,
@@ -342,7 +376,7 @@ describe("resource CLI grammar", () => {
 
   it("resource read of multiple contents adds header separators", async () => {
     const { stdout, code } = await runCli(
-      ["resource", "read", "--server", "docs", "--uri", "file:///multi"],
+      ["resource", "read", "--server", "docs", "file:///multi"],
       env,
     );
     expect(code).toBe(0);
@@ -360,7 +394,6 @@ describe("resource CLI grammar", () => {
         "read",
         "--server",
         "docs",
-        "--uri",
         "file:///image.png",
         "--out",
         outPath,
@@ -374,15 +407,15 @@ describe("resource CLI grammar", () => {
     expect(Buffer.compare(written, BINARY_BYTES)).toBe(0);
   });
 
-  it("binary blob without --out is not dumped; hints to use --out", async () => {
-    const { stdout, code } = await runCli(
-      ["resource", "read", "--server", "docs", "--uri", "file:///image.png"],
+  it("binary blob without --out is a hard error telling you to use --out", async () => {
+    const { stdout, stderr, code } = await runCli(
+      ["resource", "read", "--server", "docs", "file:///image.png"],
       env,
     );
-    expect(code).toBe(0);
+    expect(code).toBe(1);
     expect(stdout).not.toContain(BINARY_B64);
-    expect(stdout).toContain("binary");
-    expect(stdout).toContain("--out");
+    expect(stderr).toMatch(/binary/i);
+    expect(stderr).toContain("--out");
   });
 
   it("resource read --meta prints metadata only, never the body", async () => {
@@ -436,10 +469,10 @@ describe("resource CLI grammar", () => {
     const soloServer = new ToolCliServer(solo);
     const r = await soloServer.start();
     try {
-      const { stdout, code } = await runCli(
-        ["resource", "read", "--uri", "file:///x"],
-        { [PORT_ENV_VAR]: String(r.port), [TOKEN_ENV_VAR]: r.token },
-      );
+      const { stdout, code } = await runCli(["resource", "read", "file:///x"], {
+        [PORT_ENV_VAR]: String(r.port),
+        [TOKEN_ENV_VAR]: r.token,
+      });
       expect(code).toBe(0);
       expect(stdout).toContain("solo");
     } finally {
@@ -449,7 +482,7 @@ describe("resource CLI grammar", () => {
 
   it("read errors and lists servers when ambiguous and --server omitted", async () => {
     const { stderr, code } = await runCli(
-      ["resource", "read", "--uri", "file:///readme.md"],
+      ["resource", "read", "file:///readme.md"],
       env,
     );
     expect(code).toBe(1);
@@ -460,7 +493,7 @@ describe("resource CLI grammar", () => {
 
   it("read of an unknown server errors", async () => {
     const { stderr, code } = await runCli(
-      ["resource", "read", "--server", "ghost", "--uri", "file:///x"],
+      ["resource", "read", "--server", "ghost", "file:///x"],
       env,
     );
     expect(code).toBe(1);
@@ -499,7 +532,7 @@ describe("resource CLI — tools-only provider", () => {
 
   it("resource read surfaces a friendly not-supported error", async () => {
     const { stderr, code } = await runCli(
-      ["resource", "read", "--server", "plain", "--uri", "x://y"],
+      ["resource", "read", "--server", "plain", "x://y"],
       env,
     );
     expect(code).toBe(1);
