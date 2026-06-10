@@ -88,7 +88,7 @@ Behaviour notes:
 - **Text streams to stdout** by default — pipeable and greppable.
 - **Binary content requires `--out`:** a base64 `blob` is never written to stdout — `read` errors (exit 1) and tells you to pass `--out <path>`, which writes the decoded raw bytes.
 - **`--out`:** writes the body to the file (text as-is, binary decoded) and prints a one-line metadata summary plus the path instead of the body — parallels `--out` for large tool results.
-- **`skill://` URIs are hidden from `resource list`** — skills are a separate channel.
+- **`skill://` URIs are hidden from `resource list` and refused by `resource read`** — skills are a separate channel; `read` rejects a `skill://` URI without contacting the server.
 - Resources are read-only; no HITL gating is involved.
 
 Providers that don't implement resources keep working as tools-only — the new

@@ -298,7 +298,7 @@ function resourceHelp(): void {
     "With no --server, list/templates query ALL connected servers, grouped by server.",
   );
   console.log(
-    "read streams text to stdout; binary content requires --out. skill:// URIs are hidden from list.",
+    "read streams text to stdout; binary content requires --out. skill:// URIs are hidden from list and refused by read.",
   );
 }
 
@@ -462,6 +462,13 @@ async function resourceRead(
   const uri = positionalUri ?? flags.uri;
   if (!uri) {
     throw new Error("resource read requires a <uri> (positional or --uri)");
+  }
+  // Skills are a separate channel. Refuse skill:// URIs without contacting the
+  // server so a non-skill context can't read skill bodies via the resource API.
+  if (uri.startsWith("skill://")) {
+    throw new Error(
+      `refusing to read skill:// URI '${uri}': skills are a separate channel, not exposed through resources`,
+    );
   }
   const server = await resolveServer(flags.server);
 

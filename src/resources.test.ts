@@ -277,6 +277,15 @@ describe("resource CLI grammar", () => {
             },
           ],
         },
+        "skill://weather/SKILL.md": {
+          contents: [
+            {
+              uri: "skill://weather/SKILL.md",
+              mimeType: "text/markdown",
+              text: "SECRET SKILL BODY",
+            },
+          ],
+        },
       },
     });
     provider.addServer("media", {
@@ -325,6 +334,18 @@ describe("resource CLI grammar", () => {
     const uris = parsed[0].resources?.map((r) => r.uri) ?? [];
     expect(uris).toContain("file:///readme.md");
     expect(uris.some((u) => u.startsWith("skill://"))).toBe(false);
+  });
+
+  it("resource read refuses skill:// URIs without calling the server", async () => {
+    const { stdout, stderr, code } = await runCli(
+      ["resource", "read", "--server", "docs", "skill://weather/SKILL.md"],
+      env,
+    );
+    expect(code).toBe(1);
+    expect(stderr).toContain("skill://");
+    expect(stderr.toLowerCase()).toContain("refus");
+    // The server-side body must never reach stdout.
+    expect(stdout).not.toContain("SECRET SKILL BODY");
   });
 
   it("resource list with no --server groups across all servers", async () => {

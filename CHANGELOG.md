@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.6.1
+
+### Changed
+
+- `resource read` now **refuses `skill://` URIs** — it returns an error without
+  contacting the server, so skill bodies can't be read through the generic
+  resource surface. (`resource list` already hides `skill://`.)
+
 ## 0.6.0
 
 ### Changed
