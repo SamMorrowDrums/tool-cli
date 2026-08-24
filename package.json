@@ -1,8 +1,27 @@
 {
   "name": "@sammorrowdrums/tool-cli",
   "version": "0.6.1",
-  "description": "CLI and server for progressive MCP tool discovery via JSON-RPC",
+  "description": "Authenticated MCP-to-shell CLI and bridge with progressive tool discovery",
   "license": "MIT",
+  "author": "Sam Morrow <info@sam-morrow.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SamMorrowDrums/tool-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SamMorrowDrums/tool-cli/issues"
+  },
+  "homepage": "https://github.com/SamMorrowDrums/tool-cli#readme",
+  "keywords": [
+    "ai-agents",
+    "cli",
+    "json-rpc",
+    "mcp",
+    "model-context-protocol",
+    "progressive-discovery",
+    "shell",
+    "tool-discovery"
+  ],
   "type": "module",
   "exports": {
     ".": {
@@ -24,6 +43,9 @@
     "tool-cli": "./dist/cli.js"
   },
   "files": [
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
     "dist",
     "!dist/**/*.test.*"
   ],
@@ -31,12 +53,20 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build": "tsc",
+    "clean": "node scripts/clean.mjs",
+    "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
+    "pretest": "npm run clean && npm run build",
     "test": "vitest --run",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "package:verify": "node scripts/verify-package.mjs",
+    "audit": "npm audit --audit-level=high",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
+    "release:check": "npm run clean && npm run lint && npm run format:check && npm run check && npm test && npm run package:verify && npm run audit",
+    "prepack": "npm run clean && npm run build",
+    "prepublishOnly": "npm run release:check"
   },
   "dependencies": {
     "ajv": "^8.17.1",
@@ -44,12 +74,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.6.0",
-    "eslint": "^10.2.1",
+    "@types/node": "^25.9.5",
+    "eslint": "^10.9.0",
     "eslint-config-prettier": "^10.1.8",
-    "prettier": "^3.8.3",
+    "prettier": "^3.9.6",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.59.0",
-    "vitest": "^4.1.5"
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^4.1.11"
   }
 }

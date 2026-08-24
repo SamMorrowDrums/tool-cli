@@ -1,0 +1,57 @@
+name: Publish npm package
+
+on:
+  release:
+    types:
+      - published
+
+permissions: {}
+
+jobs:
+  publish:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install a trusted-publishing-compatible npm
+        run: npm install --global npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify release tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          import process from "node:process";
+
+          const { version } = JSON.parse(readFileSync("package.json", "utf8"));
+          const expectedTag = `v${version}`;
+
+          if (process.env.RELEASE_TAG !== expectedTag) {
+            throw new Error(
+              `release tag ${process.env.RELEASE_TAG} does not match ${expectedTag}`,
+            );
+          }
+          NODE
+
+      - name: Publish with provenance
+        run: npm publish --access public --provenance

@@ -20,13 +20,37 @@ npm install -g @sammorrowdrums/tool-cli
 
 MCP gives agents tools. But the way those tools are exposed — all at once, all their schemas dumped into context — creates a problem. The agent sees everything, pays for everything, and still has to guess which tool to call.
 
-**tool-cli is progressive discovery for MCP, with all the composability of bash.**
+**tool-cli is an authenticated MCP-to-shell on-ramp with progressive discovery.**
 
-The agent already has a shell — tool-cli turns that shell into a gateway to every connected MCP server. Discovery happens in steps: servers → tools → schemas → calls. Each step pays only the tokens it needs. And because it's just a CLI binary, it composes with pipes, `jq`, loops, `xargs` — the entire Unix toolkit.
+The agent already has a shell — tool-cli gives that shell a gateway to every
+connected MCP server. Discovery happens in steps: servers → tools → schemas →
+calls. Each step pays only the tokens it needs. tool-cli emits composable
+stdout, while the host's existing `bash` tool owns pipes, files, process
+execution, and external programs such as `jq`, `pandoc`, or `ffmpeg`.
 
 This is the nuclear football. It bestows executive control to the holder — every tool on every server is one command away. But like the real nuclear football, there's a dual lock. The agent holds the briefcase, but the harness holds the launch authority. The harness can gate calls, log them, or add human-in-the-loop confirmation at a single choke point. No individual actor goes rogue.
 
 That's the design: **bestow executive control to the agent, but keep the safety in the infrastructure**.
+
+---
+
+## Where tool-cli fits
+
+The surrounding mcpi experiment has four distinct, capability-shaped
+facilities. Selection is based on the work to perform, not a fixed precedence:
+
+| Facility                   | Responsibility                                                                                                                                          | Owner                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Skills                     | Portable domain workflow guidance: sequencing, decisions, and constraints. A server-published skill cannot direct host execution without host approval. | The server publishes; the host activates and enforces trust |
+| Code mode                  | Sandboxed deterministic computation and control flow over eligible read-only MCP tools/results, without filesystem, network, or process access.         | `mcpi-ext`                                                  |
+| tool-cli                   | Authenticated MCP discovery/calls exposed through the host's `bash` tool as `tool-cli ...`, with machine-composable stdout.                             | This package; `mcpi-ext` hosts the bridge/policy boundary   |
+| Bash and external programs | Artifact, document, and data pipelines using pipes, files, `jq`, `pandoc`, `ffmpeg`, and other processes.                                               | mcpi core and the host environment                          |
+
+Use a skill for domain workflow, code mode for exact sandboxed computation,
+tool-cli when MCP data must enter a shell pipeline, and bash/external programs
+for filesystem or process transformation. A pipeline may combine facilities,
+for example `tool-cli ... | jq ...` followed by `pandoc`, but tool-cli itself is
+not a pipeline engine and never launches those external programs.
 
 ---
 
@@ -49,6 +73,12 @@ Before any remote command, the CLI performs the authenticated
 `getBridgeInfo` handshake and requires bridge protocol major `1`. `--help` and
 `--version` are intentionally local-only and work without `TOOL_CLI_PORT`,
 `TOOL_CLI_TOKEN`, or a running bridge.
+
+The `0.6.x` CLI requires a bridge that implements bridge protocol major `1`;
+legacy bridges without `getBridgeInfo` are intentionally rejected. Upgrade the
+CLI package and embedding harness together when adopting protocol-major
+changes. Within major `1`, bridges may add advertised operations and
+capabilities, and clients must ignore fields they do not understand.
 
 ### Shell composability
 
@@ -136,13 +166,15 @@ This means:
 - **No individual actor goes rogue** — the agent has reach, the harness has authority. Both must agree for the launch to proceed
 
 The bridge is a **trusted-local IPC boundary**, not a general remote API. The
-bearer token protects a harness session from unrelated local processes that do
-not possess its environment, but the transport is plain HTTP and does not
-provide TLS, host identity, durable credentials, replay protection, or
-multi-tenant authorization. Keep it on loopback or inside an equivalently
-trusted container/VM network. If `TOOL_CLI_BIND_HOST` exposes it beyond that
-boundary, the embedding harness is responsible for network isolation and
-secret handling.
+short-lived bearer token is a session capability, not encryption: any process
+that can read the harness environment can use it for the token's lifetime. Do
+not log, persist, commit, or forward the token, and scope its environment to the
+intended child process. The transport is plain HTTP and does not provide TLS,
+host identity, durable credentials, replay protection, or multi-tenant
+authorization. Keep it on loopback or inside an equivalently trusted
+container/VM network. If `TOOL_CLI_BIND_HOST` exposes it beyond that boundary,
+the embedding harness is responsible for network isolation, token lifetime,
+and secret handling.
 
 tool-cli never launches arbitrary external programs. It is an MCP-to-shell
 on-ramp: the harness starts the authenticated bridge, and an agent or user
@@ -360,8 +392,7 @@ class McpToolProvider implements ToolProvider {
     return {
       content: result.content as unknown[],
       structuredContent: result.structuredContent as
-        | Record<string, unknown>
-        | undefined,
+        Record<string, unknown> | undefined,
     };
   }
 }
