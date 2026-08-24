@@ -38,20 +38,7 @@ jobs:
       - name: Verify release tag matches package version
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          node --input-type=module <<'NODE'
-          import { readFileSync } from "node:fs";
-          import process from "node:process";
-
-          const { version } = JSON.parse(readFileSync("package.json", "utf8"));
-          const expectedTag = `v${version}`;
-
-          if (process.env.RELEASE_TAG !== expectedTag) {
-            throw new Error(
-              `release tag ${process.env.RELEASE_TAG} does not match ${expectedTag}`,
-            );
-          }
-          NODE
+        run: npm run release:tag-check -- "$RELEASE_TAG"
 
       - name: Publish with provenance
         run: npm publish --access public --provenance

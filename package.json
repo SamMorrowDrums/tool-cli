@@ -1,6 +1,6 @@
 {
   "name": "@sammorrowdrums/tool-cli",
-  "version": "0.6.1",
+  "version": "1.0.0",
   "description": "Authenticated MCP-to-shell CLI and bridge with progressive tool discovery",
   "license": "MIT",
   "author": "Sam Morrow <info@sam-morrow.com>",
@@ -62,6 +62,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "package:verify": "node scripts/verify-package.mjs",
+    "release:tag-check": "node scripts/verify-release-tag.mjs",
     "audit": "npm audit --audit-level=high",
     "audit:production": "npm audit --omit=dev --audit-level=high",
     "release:check": "npm run clean && npm run lint && npm run format:check && npm run check && npm test && npm run package:verify && npm run audit",

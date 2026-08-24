@@ -4,8 +4,10 @@
 
 > **Experimental.** Part of the [mcpi-ext](https://github.com/SamMorrowDrums/mcpi-ext) experiment.
 
+For the `1.x` compatibility line, after a `1.x` package is available from npm:
+
 ```sh
-npm install -g @sammorrowdrums/tool-cli
+npm install -g @sammorrowdrums/tool-cli@^1
 ```
 
 ---
@@ -74,7 +76,7 @@ Before any remote command, the CLI performs the authenticated
 `--version` are intentionally local-only and work without `TOOL_CLI_PORT`,
 `TOOL_CLI_TOKEN`, or a running bridge.
 
-The `0.6.x` CLI requires a bridge that implements bridge protocol major `1`;
+The `1.x` CLI requires a bridge that implements bridge protocol major `1`;
 legacy bridges without `getBridgeInfo` are intentionally rejected. Upgrade the
 CLI package and embedding harness together when adopting protocol-major
 changes. Within major `1`, bridges may add advertised operations and
@@ -528,7 +530,7 @@ The server binds to `127.0.0.1` on a dynamic port. The port and auth token are c
   },
   "serverImplementation": {
     "name": "@sammorrowdrums/tool-cli",
-    "version": "0.6.1"
+    "version": "1.0.0"
   },
   "operations": [
     "getBridgeInfo",
@@ -571,6 +573,16 @@ Protocol-major changes are breaking. Additive operation/capability fields may
 arrive within major `1`; consumers must ignore unknown fields. Current CLIs are
 deliberately incompatible with legacy bridges that do not implement
 `getBridgeInfo`—upgrade the CLI package and embedding harness together.
+
+### Migrating from 0.x
+
+1. Upgrade the embedding harness so it serves the authenticated
+   `getBridgeInfo` protocol v1 contract and preserves complete tool/resource
+   results.
+2. Deploy the harness and CLI together; a `1.x` CLI does not fall back to an
+   older bridge.
+3. After the `1.x` package is available from npm, install or update with
+   `npm install -g @sammorrowdrums/tool-cli@^1`.
 
 ### Embedding-harness counterpart requirements
 

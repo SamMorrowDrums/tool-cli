@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.0.0
+
+### Breaking
+
+- Every remote CLI command now performs the authenticated `getBridgeInfo`
+  handshake and requires bridge protocol `tool-cli-bridge` major `1`. Legacy
+  bridges without the handshake are intentionally incompatible; upgrade the
+  CLI and embedding harness together.
+
+### Changed
+
+- Client failures are typed across HTTP, JSON-RPC, invalid/non-JSON responses,
+  transport errors, compatibility failures, finite timeouts, and caller
+  cancellation. Disconnect cancellation is propagated to tool/resource
+  providers through `AbortSignal`.
+- Server, tool, resource, and template discovery is deterministically sorted.
+  Calls are restricted to the exact discovered tool set and validated against
+  each tool's complete input schema before provider dispatch.
+- JSON output preserves complete structured tool results, modern MCP content
+  blocks, embedded resources, resource links, and extension fields. Resource
+  discovery reports partial failures explicitly; text remains pipeable, while
+  binary resource bodies require `--out` in human mode and stay lossless as
+  base64 under `--json`.
+- The security contract is explicit: bearer authentication protects a
+  short-lived trusted-local IPC boundary, not a TLS-secured or multi-tenant
+  remote API.
+
+### Migrating from 0.x
+
+- Deploy an embedding harness that serves authenticated bridge protocol v1,
+  exposes the same policy-visible schemas it dispatches, and preserves complete
+  MCP results. Then move CLI installations to the `1.x` line. There is no
+  fallback to pre-handshake bridges.
+
 ## 0.6.1
 
 ### Changed
