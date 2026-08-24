@@ -1,7 +1,21 @@
 #!/usr/bin/env node
 
 import { writeFileSync } from "node:fs";
-import { rpcCall } from "./rpc-client.js";
+import {
+  BridgeCompatibilityError,
+  RpcAbortError,
+  RpcHttpError,
+  RpcNonJsonResponseError,
+  RpcProtocolError,
+  RpcTimeoutError,
+  RpcTransportError,
+  getBridgeInfo,
+  rpcCall,
+  type RpcCallOptions,
+} from "./rpc-client.js";
+import { MAX_TIMEOUT_MS } from "./constants.js";
+import { SERVER_IMPLEMENTATION_VERSION } from "./protocol.js";
+import { formatSchema } from "./schema-summary.js";
 
 interface ServerInfo {
   name: string;
@@ -21,6 +35,13 @@ interface ToolDetails {
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   annotations?: Record<string, unknown>;
+}
+
+interface CallToolResult {
+  content: unknown[];
+  isError?: boolean;
+  structuredContent?: unknown;
+  [key: string]: unknown;
 }
 
 interface ResourceInfo {
@@ -56,86 +77,141 @@ interface ResourceFlags {
   meta: boolean;
 }
 
+interface SerializedError {
+  type: string;
+  message: string;
+  httpStatus?: number;
+  responseBody?: string;
+  contentType?: string | null;
+  rpcCode?: number;
+  rpcData?: unknown;
+}
+
+let activeRpcOptions: RpcCallOptions = {};
+
 async function main(): Promise<void> {
   const rawArgs = process.argv.slice(2);
 
-  // Extract flags (can appear anywhere). Value flags consume the next arg;
-  // boolean flags stand alone. Everything else is a positional argument.
-  let outFile: string | undefined;
-  let serverFlag: string | undefined;
-  let uriFlag: string | undefined;
-  let jsonFlag = false;
-  let metaFlag = false;
-  const args: string[] = [];
-  for (let i = 0; i < rawArgs.length; i++) {
-    const arg = rawArgs[i];
-    if (arg === "--out" && i + 1 < rawArgs.length) {
-      outFile = rawArgs[++i];
-    } else if (arg === "--server" && i + 1 < rawArgs.length) {
-      serverFlag = rawArgs[++i];
-    } else if (arg === "--uri" && i + 1 < rawArgs.length) {
-      uriFlag = rawArgs[++i];
-    } else if (arg === "--json") {
-      jsonFlag = true;
-    } else if (arg === "--meta") {
-      metaFlag = true;
-    } else {
-      args.push(arg);
-    }
-  }
-
   try {
-    // No args or --help → list servers
-    if (args.length === 0 || (args.length === 1 && isHelp(args[0]))) {
-      await listServers();
+    if (rawArgs.length === 1 && isHelp(rawArgs[0])) {
+      globalHelp();
+      return;
+    }
+    if (rawArgs.length === 1 && isVersion(rawArgs[0])) {
+      console.log(SERVER_IMPLEMENTATION_VERSION);
       return;
     }
 
-    // `resource` subcommand group (singular, reserved word). A server
-    // literally named `resource` is therefore unsupported — acceptable here.
-    if (args[0] === "resource") {
-      await handleResource(args.slice(1), {
-        server: serverFlag,
-        uri: uriFlag,
-        outFile,
-        json: jsonFlag,
-        meta: metaFlag,
-      });
-      return;
+    // Extract flags (can appear anywhere). Value flags consume the next arg;
+    // boolean flags stand alone. Everything else is a positional argument.
+    let outFile: string | undefined;
+    let serverFlag: string | undefined;
+    let uriFlag: string | undefined;
+    let timeoutMs: number | undefined;
+    let jsonFlag = false;
+    let metaFlag = false;
+    const args: string[] = [];
+    for (let i = 0; i < rawArgs.length; i++) {
+      const arg = rawArgs[i];
+      if (arg === "--out") {
+        outFile = requireFlagValue(rawArgs, ++i, arg);
+      } else if (arg === "--server") {
+        serverFlag = requireFlagValue(rawArgs, ++i, arg);
+      } else if (arg === "--uri") {
+        uriFlag = requireFlagValue(rawArgs, ++i, arg);
+      } else if (arg === "--timeout") {
+        const value = requireFlagValue(rawArgs, ++i, arg);
+        timeoutMs = Number(value);
+        if (
+          !Number.isInteger(timeoutMs) ||
+          timeoutMs <= 0 ||
+          timeoutMs > MAX_TIMEOUT_MS
+        ) {
+          throw new Error(
+            `--timeout must be an integer between 1 and ${MAX_TIMEOUT_MS}ms`,
+          );
+        }
+      } else if (arg === "--json") {
+        jsonFlag = true;
+      } else if (arg === "--meta") {
+        metaFlag = true;
+      } else {
+        args.push(arg);
+      }
     }
 
-    const server = args[0];
+    const controller = new AbortController();
+    const cancel = () => controller.abort();
+    process.once("SIGINT", cancel);
+    process.once("SIGTERM", cancel);
+    activeRpcOptions = { signal: controller.signal, timeoutMs };
 
-    // <server> --help or just <server> → list tools
-    if (args.length === 1 || (args.length === 2 && isHelp(args[1]))) {
-      await listTools(server);
-      return;
+    try {
+      // Every remote command starts with the authenticated v1 handshake.
+      await getBridgeInfo(activeRpcOptions);
+
+      if (args.length === 0) {
+        await listServers(jsonFlag);
+        return;
+      }
+
+      // `resource` subcommand group (singular, reserved word). A server
+      // literally named `resource` is therefore unsupported — acceptable here.
+      if (args[0] === "resource") {
+        await handleResource(args.slice(1), {
+          server: serverFlag,
+          uri: uriFlag,
+          outFile,
+          json: jsonFlag,
+          meta: metaFlag,
+        });
+        return;
+      }
+
+      const server = args[0];
+
+      // <server> --help or just <server> → list tools
+      if (args.length === 1 || (args.length === 2 && isHelp(args[1]))) {
+        await listTools(server, jsonFlag);
+        return;
+      }
+
+      const tool = args[1];
+
+      // <server> <tool> --help or just <server> <tool> → describe tool
+      if (args.length === 2 || (args.length === 3 && isHelp(args[2]))) {
+        await describeTool(server, tool, jsonFlag);
+        return;
+      }
+
+      // <server> <tool> <json-args> → call tool
+      await callTool(server, tool, args[2], outFile, jsonFlag);
+    } finally {
+      process.removeListener("SIGINT", cancel);
+      process.removeListener("SIGTERM", cancel);
     }
-
-    const tool = args[1];
-
-    // <server> <tool> --help or just <server> <tool> → describe tool
-    if (args.length === 2 || (args.length === 3 && isHelp(args[2]))) {
-      await describeTool(server, tool);
-      return;
-    }
-
-    // <server> <tool> <json-args> → call tool
-    await callTool(server, tool, args[2], outFile);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
+    if (
+      err instanceof RpcTransportError &&
+      (hasErrorCode(err, "ECONNREFUSED") ||
+        err.message.includes("fetch failed"))
+    ) {
       console.error("Error: tool-cli server not running. Is mcpi-ext loaded?");
     } else {
-      console.error(`Error: ${message}`);
+      console.error(`Error: ${formatCliError(err)}`);
     }
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
-async function listServers(): Promise<void> {
-  const result = (await rpcCall("listServers")) as { servers: ServerInfo[] };
+async function listServers(json: boolean): Promise<void> {
+  const result = (await bridgeRpc("listServers")) as { servers: ServerInfo[] };
   const { servers } = result;
+
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
 
   if (servers.length === 0) {
     console.log("No MCP servers connected.");
@@ -153,11 +229,16 @@ async function listServers(): Promise<void> {
   console.log("Use: tool-cli resource list to list resources");
 }
 
-async function listTools(server: string): Promise<void> {
-  const result = (await rpcCall("listTools", { server })) as {
+async function listTools(server: string, json: boolean): Promise<void> {
+  const result = (await bridgeRpc("listTools", { server })) as {
     server: string;
     tools: ToolSummary[];
   };
+
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
 
   if (result.tools.length === 0) {
     console.log(`${server} — no tools`);
@@ -173,11 +254,20 @@ async function listTools(server: string): Promise<void> {
   console.log("Use: tool-cli <server> <tool> for full schema");
 }
 
-async function describeTool(server: string, tool: string): Promise<void> {
-  const result = (await rpcCall("describeTool", {
+async function describeTool(
+  server: string,
+  tool: string,
+  json: boolean,
+): Promise<void> {
+  const result = (await bridgeRpc("describeTool", {
     server,
     tool,
   })) as ToolDetails;
+
+  if (json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
 
   console.log(`${result.name} — ${result.description}`);
   console.log("");
@@ -207,49 +297,66 @@ async function callTool(
   tool: string,
   argsJson: string,
   outFile?: string,
+  json = false,
 ): Promise<void> {
-  let toolArgs: Record<string, unknown>;
+  let toolArgs: unknown;
   try {
-    toolArgs = JSON.parse(argsJson) as Record<string, unknown>;
+    toolArgs = JSON.parse(argsJson) as unknown;
   } catch {
-    console.error(`Error: invalid JSON arguments: ${argsJson}`);
-    process.exit(1);
+    throw new Error(`invalid JSON arguments: ${argsJson}`);
   }
 
-  const result = (await rpcCall("callTool", {
+  const result = (await bridgeRpc("callTool", {
     server,
     tool,
     arguments: toolArgs,
-  })) as {
-    content: unknown[];
-    isError?: boolean;
-    structuredContent?: Record<string, unknown>;
-  };
+  })) as CallToolResult;
 
   if (result.isError) {
-    // Error content goes to stderr so stdout stays clean for piping
-    if (result.structuredContent) {
+    if (json) {
+      console.error(JSON.stringify(result, null, 2));
+    } else if (result.structuredContent !== undefined) {
       console.error(JSON.stringify(result.structuredContent, null, 2));
     } else if (result.content) {
       for (const item of result.content) {
-        const entry = item as Record<string, unknown>;
-        if (entry.type === "text") {
-          console.error(entry.text);
+        if (
+          item !== null &&
+          typeof item === "object" &&
+          !Array.isArray(item) &&
+          (item as Record<string, unknown>).type === "text" &&
+          typeof (item as Record<string, unknown>).text === "string"
+        ) {
+          console.error((item as Record<string, unknown>).text);
         } else {
-          console.error(JSON.stringify(entry, null, 2));
+          console.error(JSON.stringify(item, null, 2));
         }
       }
     }
-    process.exit(1);
+    process.exitCode = 1;
     return;
   }
 
-  const output = formatOutput(result.structuredContent, result.content);
+  const output = json
+    ? JSON.stringify(result, null, 2)
+    : formatOutput(result.structuredContent, result.content);
   if (!output) return;
 
   if (outFile) {
     writeFileSync(outFile, output, "utf-8");
-    console.log(`Written to: ${outFile}`);
+    if (json) {
+      console.log(
+        JSON.stringify(
+          {
+            written: outFile,
+            bytes: Buffer.byteLength(output, "utf8"),
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      console.log(`Written to: ${outFile}`);
+    }
   } else {
     console.log(output);
   }
@@ -303,10 +410,10 @@ function resourceHelp(): void {
 }
 
 async function getAllServerNames(): Promise<string[]> {
-  const result = (await rpcCall("listServers")) as {
+  const result = (await bridgeRpc("listServers")) as {
     servers: { name: string }[];
   };
-  return result.servers.map((s) => s.name);
+  return result.servers.map((s) => s.name).sort(compareNames);
 }
 
 /** Resolve the target server for single-server operations like `read`. */
@@ -330,58 +437,68 @@ async function resourceList(
   const servers = flags.server ? [flags.server] : await getAllServerNames();
 
   if (servers.length === 0) {
-    if (flags.json) console.log("[]");
-    else console.log("No MCP servers connected.");
+    if (flags.json) {
+      console.log(
+        JSON.stringify({ kind, status: "complete", results: [] }, null, 2),
+      );
+    } else console.log("No MCP servers connected.");
     return;
   }
 
   type Entry = {
     server: string;
     items?: (ResourceInfo | ResourceTemplateInfo)[];
-    error?: string;
+    error?: SerializedError;
   };
-  const entries: Entry[] = [];
-  for (const s of servers) {
-    try {
-      const res = (await rpcCall(method, { server: s })) as Record<
-        string,
-        unknown
-      >;
-      const items = (kind === "templates" ? res.templates : res.resources) as (
-        | ResourceInfo
-        | ResourceTemplateInfo
-      )[];
-      // Skills are a separate channel — never surface skill:// resources here.
-      const visible =
-        kind === "templates"
-          ? items
-          : items.filter(
-              (i) => !((i as ResourceInfo).uri ?? "").startsWith("skill://"),
-            );
-      entries.push({ server: s, items: visible });
-    } catch (err) {
-      entries.push({
-        server: s,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  const entries = await Promise.all(
+    servers.map(async (server): Promise<Entry> => {
+      try {
+        const res = (await bridgeRpc(method, { server })) as Record<
+          string,
+          unknown
+        >;
+        const items = (
+          kind === "templates" ? res.templates : res.resources
+        ) as (ResourceInfo | ResourceTemplateInfo)[];
+        // Skills are a separate channel — never surface skill:// resources here.
+        const visible =
+          kind === "templates"
+            ? items
+            : items.filter(
+                (i) => !((i as ResourceInfo).uri ?? "").startsWith("skill://"),
+              );
+        return { server, items: visible };
+      } catch (err) {
+        return { server, error: serializeError(err) };
+      }
+    }),
+  );
+
+  const failureCount = entries.filter((entry) => entry.error).length;
+  const status =
+    failureCount === 0
+      ? "complete"
+      : failureCount === entries.length
+        ? "failed"
+        : "partial";
 
   if (flags.json) {
-    const out = entries.map((e) =>
-      e.error
-        ? { server: e.server, error: e.error }
+    const results = entries.map((entry) =>
+      entry.error
+        ? { server: entry.server, ok: false, error: entry.error }
         : kind === "templates"
-          ? { server: e.server, templates: e.items ?? [] }
-          : { server: e.server, resources: e.items ?? [] },
+          ? { server: entry.server, ok: true, templates: entry.items ?? [] }
+          : { server: entry.server, ok: true, resources: entry.items ?? [] },
     );
+    const out = { kind, status, results };
     console.log(JSON.stringify(out, null, 2));
+    if (status === "failed") process.exitCode = 1;
     return;
   }
 
   for (const e of entries) {
     if (e.error) {
-      console.log(`${e.server} — ${e.error}`);
+      console.error(`${e.server} — ${e.error.message}`);
       continue;
     }
     const items = e.items ?? [];
@@ -400,6 +517,14 @@ async function resourceList(
       console.log(`  ${id}${name}${mime}${desc}`);
     }
     console.log("");
+  }
+
+  if (status === "partial") {
+    console.error(
+      `Warning: partial ${label} discovery (${failureCount}/${entries.length} server(s) failed).`,
+    );
+  } else if (status === "failed") {
+    process.exitCode = 1;
   }
 }
 
@@ -472,7 +597,7 @@ async function resourceRead(
   }
   const server = await resolveServer(flags.server);
 
-  const result = (await rpcCall("readResource", {
+  const result = (await bridgeRpc("readResource", {
     server,
     uri,
   })) as ReadResourceResult;
@@ -514,10 +639,8 @@ async function resourceRead(
     return;
   }
 
-  // --json without --out → machine-readable result. Binary still requires
-  // --out so we never stream raw bytes (even base64) as the body channel.
+  // --json is the lossless machine-readable form, including base64 blobs.
   if (flags.json) {
-    assertNoBinaryWithoutOut(contents);
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -550,20 +673,25 @@ function assertNoBinaryWithoutOut(contents: ReadResourceContent[]): void {
 
 /** Build the output string from structured or raw content. */
 function formatOutput(
-  structuredContent?: Record<string, unknown>,
+  structuredContent?: unknown,
   content?: unknown[],
 ): string {
-  if (structuredContent) {
+  if (structuredContent !== undefined) {
     return JSON.stringify(structuredContent, null, 2);
   }
   if (content) {
     const parts: string[] = [];
     for (const item of content) {
-      const entry = item as Record<string, unknown>;
-      if (entry.type === "text") {
-        parts.push(entry.text as string);
+      if (
+        item !== null &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        (item as Record<string, unknown>).type === "text" &&
+        typeof (item as Record<string, unknown>).text === "string"
+      ) {
+        parts.push((item as Record<string, unknown>).text as string);
       } else {
-        parts.push(JSON.stringify(entry, null, 2));
+        parts.push(JSON.stringify(item, null, 2));
       }
     }
     return parts.join("\n");
@@ -571,29 +699,110 @@ function formatOutput(
   return "";
 }
 
-/** Format a JSON Schema as a compact, readable summary. */
-function formatSchema(schema: Record<string, unknown>): string {
-  const props = schema.properties as
-    | Record<string, Record<string, unknown>>
-    | undefined;
-  const required = (schema.required as string[]) ?? [];
+function globalHelp(): void {
+  console.log(`tool-cli ${SERVER_IMPLEMENTATION_VERSION}`);
+  console.log("");
+  console.log("Usage:");
+  console.log("  tool-cli [--json]                              List servers");
+  console.log("  tool-cli <server> [--json]                     List tools");
+  console.log(
+    "  tool-cli <server> <tool> [--json]              Describe a tool",
+  );
+  console.log("  tool-cli <server> <tool> '<json>' [--json]     Call a tool");
+  console.log(
+    "  tool-cli resource <list|templates|read> ...    Access resources",
+  );
+  console.log("");
+  console.log("Global options:");
+  console.log("  -h, --help                 Show this help without connecting");
+  console.log(
+    "  -V, --version              Show the CLI version without connecting",
+  );
+  console.log(
+    `  --timeout <ms>             Request timeout (1-${MAX_TIMEOUT_MS})`,
+  );
+  console.log("  --json                     Lossless machine-readable output");
+}
 
-  if (!props || Object.keys(props).length === 0) {
-    return "  (no parameters)";
+function requireFlagValue(args: string[], index: number, flag: string): string {
+  const value = args[index];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
   }
+  return value;
+}
 
-  const lines: string[] = [];
-  for (const [name, prop] of Object.entries(props)) {
-    const type = (prop.type as string) ?? "unknown";
-    const req = required.includes(name) ? ", required" : "";
-    const desc = prop.description ? `: ${prop.description as string}` : "";
-    lines.push(`  ${name} (${type}${req})${desc}`);
+function bridgeRpc(
+  method: string,
+  params: Record<string, unknown> = {},
+): Promise<unknown> {
+  return rpcCall(method, params, activeRpcOptions);
+}
+
+function serializeError(err: unknown): SerializedError {
+  if (err instanceof RpcHttpError) {
+    return {
+      type: err.name,
+      message: err.message,
+      httpStatus: err.status,
+      responseBody: err.body,
+      contentType: err.contentType,
+      ...(err.rpcCode === undefined ? {} : { rpcCode: err.rpcCode }),
+      ...(err.rpcData === undefined ? {} : { rpcData: err.rpcData }),
+    };
   }
-  return lines.join("\n");
+  if (err instanceof RpcProtocolError) {
+    return {
+      type: err.name,
+      message: err.message,
+      httpStatus: err.httpStatus,
+      rpcCode: err.code,
+      ...(err.data === undefined ? {} : { rpcData: err.data }),
+    };
+  }
+  return {
+    type: err instanceof Error ? err.name : "Error",
+    message: err instanceof Error ? err.message : String(err),
+  };
+}
+
+function formatCliError(err: unknown): string {
+  if (err instanceof RpcProtocolError) {
+    const data =
+      err.data === undefined ? "" : `\n${JSON.stringify(err.data, null, 2)}`;
+    return `JSON-RPC ${err.code}: ${err.message}${data}`;
+  }
+  if (
+    err instanceof RpcHttpError ||
+    err instanceof RpcNonJsonResponseError ||
+    err instanceof RpcTimeoutError ||
+    err instanceof RpcAbortError ||
+    err instanceof BridgeCompatibilityError
+  ) {
+    return err.message;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
+function hasErrorCode(err: Error, code: string): boolean {
+  let current: unknown = err;
+  while (current instanceof Error) {
+    if ((current as NodeJS.ErrnoException).code === code) return true;
+    current = current.cause;
+  }
+  return false;
+}
+
+function compareNames(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 function isHelp(arg: string): boolean {
   return arg === "--help" || arg === "-h";
+}
+
+function isVersion(arg: string): boolean {
+  return arg === "--version" || arg === "-V";
 }
 
 void main();

@@ -1,8 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { ToolCliServer } from "./server.js";
-import { rpcCall } from "./rpc-client.js";
+import { RpcProtocolError, rpcCall } from "./rpc-client.js";
 import type { ToolProvider, ToolInfo, CallToolResult } from "./provider.js";
 import { PORT_ENV_VAR, TOKEN_ENV_VAR } from "./constants.js";
+import {
+  BRIDGE_PROTOCOL_MAJOR,
+  BRIDGE_PROTOCOL_VERSION,
+  BRIDGE_RPC_OPERATIONS,
+  SERVER_IMPLEMENTATION_NAME,
+  SERVER_IMPLEMENTATION_VERSION,
+} from "./protocol.js";
 
 /**
  * In-memory ToolProvider for testing.
@@ -10,6 +17,7 @@ import { PORT_ENV_VAR, TOKEN_ENV_VAR } from "./constants.js";
  */
 class MockProvider implements ToolProvider {
   private servers = new Map<string, ToolInfo[]>();
+  callCount = 0;
 
   addServer(name: string, tools: ToolInfo[]) {
     this.servers.set(name, tools);
@@ -28,9 +36,18 @@ class MockProvider implements ToolProvider {
     tool: string,
     args: Record<string, unknown>,
   ): Promise<CallToolResult> {
+    this.callCount++;
     return {
       content: [{ type: "text", text: `Called ${tool}` }],
       structuredContent: { tool, args },
+    };
+  }
+
+  getUpstreamMcpSummary() {
+    return {
+      protocolVersion: "2025-06-18",
+      implementation: { name: "mock-harness", version: "9.1.0" },
+      capabilities: { tools: { listChanged: true } },
     };
   }
 }
@@ -47,17 +64,43 @@ describe("tool-cli server + client integration", () => {
         description: "Get weather for a city",
         inputSchema: {
           type: "object",
-          properties: { city: { type: "string", description: "City name" } },
+          properties: {
+            city: { type: "string", description: "City name" },
+            units: { type: "string", enum: ["metric", "imperial"] },
+            callback: { type: "string", format: "uri" },
+          },
           required: ["city"],
+          additionalProperties: false,
         },
       },
       {
         name: "list_items",
         description: "List all items",
-        inputSchema: { type: "object", properties: {} },
+        inputSchema: {
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
         outputSchema: {
           type: "array",
           items: { type: "object", properties: { id: { type: "string" } } },
+        },
+      },
+      {
+        name: "zeta_tool",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "alpha_tool",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
         },
       },
     ]);
@@ -84,6 +127,7 @@ describe("tool-cli server + client integration", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", method: "listServers", id: 1 }),
       });
+
       expect(res.status).toBe(401);
     });
 
@@ -120,6 +164,59 @@ describe("tool-cli server + client integration", () => {
     });
   });
 
+  describe("getBridgeInfo", () => {
+    it("returns the authenticated v1 bridge contract and upstream summary", async () => {
+      const result = (await rpcCall("getBridgeInfo")) as {
+        bridgeProtocol: { major: number; version: string };
+        serverImplementation: { name: string; version: string };
+        operations: string[];
+        capabilities: {
+          tools: { inputSchemaValidation: boolean };
+          resources: { list: boolean; templates: boolean; read: boolean };
+          cancellation: { providerAbortSignal: boolean };
+        };
+        upstreamMcp: {
+          protocolVersion: string;
+          implementation: { name: string; version: string };
+        };
+      };
+
+      expect(result.bridgeProtocol).toMatchObject({
+        major: BRIDGE_PROTOCOL_MAJOR,
+        version: BRIDGE_PROTOCOL_VERSION,
+      });
+      expect(result.serverImplementation).toEqual({
+        name: SERVER_IMPLEMENTATION_NAME,
+        version: SERVER_IMPLEMENTATION_VERSION,
+      });
+      expect(result.operations).toEqual(BRIDGE_RPC_OPERATIONS);
+      expect(result.capabilities.tools.inputSchemaValidation).toBe(true);
+      expect(result.capabilities.resources).toEqual({
+        list: false,
+        templates: false,
+        read: false,
+      });
+      expect(result.capabilities.cancellation.providerAbortSignal).toBe(true);
+      expect(result.upstreamMcp).toMatchObject({
+        protocolVersion: "2025-06-18",
+        implementation: { name: "mock-harness", version: "9.1.0" },
+      });
+    });
+
+    it("is protected by the same bearer authentication as all other methods", async () => {
+      const res = await fetch(`http://127.0.0.1:${server.getPort()}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "getBridgeInfo",
+          id: 1,
+        }),
+      });
+      expect(res.status).toBe(401);
+    });
+  });
+
   describe("start() returns port and token", () => {
     it("returns a valid port number", () => {
       const port = server.getPort();
@@ -138,14 +235,17 @@ describe("tool-cli server + client integration", () => {
       const result = (await rpcCall("listServers")) as {
         servers: { name: string; toolCount: number }[];
       };
-      const names = result.servers.map((s) => s.name).sort();
+      const names = result.servers.map((s) => s.name);
       expect(names).toEqual(["empty-server", "test-server"]);
 
       const testServer = result.servers.find((s) => s.name === "test-server");
-      expect(testServer?.toolCount).toBe(2);
+      expect(testServer?.toolCount).toBe(4);
 
       const emptyServer = result.servers.find((s) => s.name === "empty-server");
       expect(emptyServer?.toolCount).toBe(0);
+      expect(testServer).toMatchObject({
+        examples: ["alpha_tool", "get_weather", "list_items"],
+      });
     });
   });
 
@@ -162,7 +262,13 @@ describe("tool-cli server + client integration", () => {
         }[];
       };
       expect(result.server).toBe("test-server");
-      expect(result.tools).toHaveLength(2);
+      expect(result.tools).toHaveLength(4);
+      expect(result.tools.map((tool) => tool.name)).toEqual([
+        "alpha_tool",
+        "get_weather",
+        "list_items",
+        "zeta_tool",
+      ]);
 
       const weather = result.tools.find((t) => t.name === "get_weather");
       expect(weather?.description).toBe("Get weather for a city");
@@ -247,6 +353,79 @@ describe("tool-cli server + client integration", () => {
         tool: "list_items",
       })) as { structuredContent?: Record<string, unknown> };
       expect(result.structuredContent?.args).toEqual({});
+    });
+
+    it("rejects an undiscovered tool before provider.callTool", async () => {
+      const callsBefore = provider.callCount;
+      await expect(
+        rpcCall("callTool", {
+          server: "test-server",
+          tool: "not_discovered",
+          arguments: {},
+        }),
+      ).rejects.toMatchObject({
+        code: -32602,
+        data: {
+          server: "test-server",
+          tool: "not_discovered",
+          discoveredTools: [
+            "alpha_tool",
+            "get_weather",
+            "list_items",
+            "zeta_tool",
+          ],
+        },
+      });
+      expect(provider.callCount).toBe(callsBefore);
+    });
+
+    it("rejects schema-invalid arguments with JSON-RPC data before provider.callTool", async () => {
+      const callsBefore = provider.callCount;
+      await expect(
+        rpcCall("callTool", {
+          server: "test-server",
+          tool: "get_weather",
+          arguments: {
+            units: "kelvin",
+            callback: "not a uri",
+            unexpected: true,
+          },
+        }),
+      ).rejects.toSatisfy((err: unknown) => {
+        if (!(err instanceof RpcProtocolError)) return false;
+        const data = err.data as { validationErrors?: unknown[] };
+        return (
+          err.code === -32602 &&
+          Array.isArray(data.validationErrors) &&
+          data.validationErrors.length >= 3 &&
+          data.validationErrors.some(
+            (error) =>
+              typeof error === "object" &&
+              error !== null &&
+              (error as { keyword?: unknown }).keyword === "format",
+          )
+        );
+      });
+      expect(provider.callCount).toBe(callsBefore);
+    });
+
+    it("rejects non-object arguments before provider.callTool", async () => {
+      const callsBefore = provider.callCount;
+      await expect(
+        rpcCall("callTool", {
+          server: "test-server",
+          tool: "get_weather",
+          arguments: ["Tokyo"],
+        }),
+      ).rejects.toMatchObject({ code: -32602 });
+      await expect(
+        rpcCall("callTool", {
+          server: "test-server",
+          tool: "list_items",
+          arguments: null,
+        }),
+      ).rejects.toMatchObject({ code: -32602 });
+      expect(provider.callCount).toBe(callsBefore);
     });
   });
 

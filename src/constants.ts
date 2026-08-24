@@ -9,6 +9,15 @@ export const PORT_ENV_VAR = "TOOL_CLI_PORT";
 /** Environment variable for the shared auth token. */
 export const TOKEN_ENV_VAR = "TOOL_CLI_TOKEN";
 
+/** Default finite timeout for bridge requests. */
+export const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Maximum configurable timeout for bridge requests. */
+export const MAX_TIMEOUT_MS = 300_000;
+
+/** Environment variable that overrides the bridge request timeout. */
+export const TIMEOUT_ENV_VAR = "TOOL_CLI_TIMEOUT_MS";
+
 /** Default loopback host for both bind and client target. */
 export const DEFAULT_HOST = "127.0.0.1";
 
@@ -31,6 +40,29 @@ export function resolvePort(): number {
 /** Resolve the token from environment, or undefined if not set. */
 export function resolveToken(): string | undefined {
   return process.env[TOKEN_ENV_VAR] || undefined;
+}
+
+/** Resolve and bound the bridge request timeout. */
+export function resolveTimeoutMs(explicit?: number): number {
+  if (explicit !== undefined) {
+    if (
+      !Number.isInteger(explicit) ||
+      explicit <= 0 ||
+      explicit > MAX_TIMEOUT_MS
+    ) {
+      throw new RangeError(
+        `timeout must be an integer between 1 and ${MAX_TIMEOUT_MS}ms`,
+      );
+    }
+    return explicit;
+  }
+
+  const configured = process.env[TIMEOUT_ENV_VAR];
+  if (!configured) return DEFAULT_TIMEOUT_MS;
+  const parsed = Number(configured);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= MAX_TIMEOUT_MS
+    ? parsed
+    : DEFAULT_TIMEOUT_MS;
 }
 
 /**

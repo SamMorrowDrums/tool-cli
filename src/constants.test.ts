@@ -1,9 +1,13 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   BIND_HOST_ENV_VAR,
+  DEFAULT_TIMEOUT_MS,
   HOST_ENV_VAR,
+  MAX_TIMEOUT_MS,
+  TIMEOUT_ENV_VAR,
   resolveBindHost,
   resolveHost,
+  resolveTimeoutMs,
 } from "./constants.js";
 
 describe("resolveBindHost", () => {
@@ -30,6 +34,36 @@ describe("resolveBindHost", () => {
 describe("resolveHost", () => {
   afterEach(() => {
     delete process.env[HOST_ENV_VAR];
+  });
+
+  describe("resolveTimeoutMs", () => {
+    afterEach(() => {
+      delete process.env[TIMEOUT_ENV_VAR];
+    });
+
+    it("uses a finite default", () => {
+      expect(resolveTimeoutMs()).toBe(DEFAULT_TIMEOUT_MS);
+    });
+
+    it("accepts an in-range explicit timeout", () => {
+      expect(resolveTimeoutMs(250)).toBe(250);
+    });
+
+    it("rejects unbounded or invalid explicit timeouts", () => {
+      expect(() => resolveTimeoutMs(0)).toThrow(RangeError);
+      expect(() => resolveTimeoutMs(MAX_TIMEOUT_MS + 1)).toThrow(RangeError);
+      expect(() => resolveTimeoutMs(Number.POSITIVE_INFINITY)).toThrow(
+        RangeError,
+      );
+    });
+
+    it("uses a valid environment timeout and ignores invalid values", () => {
+      process.env[TIMEOUT_ENV_VAR] = "1500";
+      expect(resolveTimeoutMs()).toBe(1500);
+
+      process.env[TIMEOUT_ENV_VAR] = "unbounded";
+      expect(resolveTimeoutMs()).toBe(DEFAULT_TIMEOUT_MS);
+    });
   });
 
   it("defaults to 127.0.0.1 when env unset", () => {

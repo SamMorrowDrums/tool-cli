@@ -153,6 +153,16 @@ describe("resource RPC methods", () => {
     provider.addServer("media", {
       resources: [{ uri: "asset://logo", name: "Logo", mimeType: "image/svg" }],
     });
+    provider.addServer("unordered", {
+      resources: [
+        { uri: "file:///z.txt", customMetadata: { rank: 2 } },
+        { uri: "file:///a.txt", customMetadata: { rank: 1 } },
+      ],
+      templates: [
+        { uriTemplate: "file:///z/{id}" },
+        { uriTemplate: "file:///a/{id}" },
+      ],
+    });
 
     const result = await server.start();
     process.env[PORT_ENV_VAR] = String(result.port);
@@ -180,6 +190,25 @@ describe("resource RPC methods", () => {
       server: "docs",
     })) as { templates: ResourceTemplateInfo[] };
     expect(res.templates[0].uriTemplate).toBe("file:///logs/{date}.log");
+  });
+
+  it("sorts discovery deterministically without losing resource metadata", async () => {
+    const resources = (await rpcCall("listResources", {
+      server: "unordered",
+    })) as { resources: ResourceInfo[] };
+    expect(resources.resources.map((item) => item.uri)).toEqual([
+      "file:///a.txt",
+      "file:///z.txt",
+    ]);
+    expect(resources.resources[0].customMetadata).toEqual({ rank: 1 });
+
+    const templates = (await rpcCall("listResourceTemplates", {
+      server: "unordered",
+    })) as { templates: ResourceTemplateInfo[] };
+    expect(templates.templates.map((item) => item.uriTemplate)).toEqual([
+      "file:///a/{id}",
+      "file:///z/{id}",
+    ]);
   });
 
   it("readResource returns contents", async () => {
@@ -328,10 +357,10 @@ describe("resource CLI grammar", () => {
     );
     expect(json.stdout).not.toContain("skill://");
     const parsed = JSON.parse(json.stdout) as {
-      server: string;
-      resources?: ResourceInfo[];
-    }[];
-    const uris = parsed[0].resources?.map((r) => r.uri) ?? [];
+      status: string;
+      results: { server: string; resources?: ResourceInfo[] }[];
+    };
+    const uris = parsed.results[0].resources?.map((r) => r.uri) ?? [];
     expect(uris).toContain("file:///readme.md");
     expect(uris.some((u) => u.startsWith("skill://"))).toBe(false);
   });
@@ -370,10 +399,13 @@ describe("resource CLI grammar", () => {
     const { stdout, code } = await runCli(["resource", "list", "--json"], env);
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout) as {
-      server: string;
-      resources?: ResourceInfo[];
-    }[];
-    const docs = parsed.find((p) => p.server === "docs");
+      kind: string;
+      status: string;
+      results: { server: string; resources?: ResourceInfo[] }[];
+    };
+    expect(parsed.kind).toBe("resources");
+    expect(parsed.status).toBe("complete");
+    const docs = parsed.results.find((p) => p.server === "docs");
     expect(docs?.resources?.[0].uri).toBe("file:///readme.md");
   });
 
@@ -476,6 +508,16 @@ describe("resource CLI grammar", () => {
     expect(parsed.contents[0].text).toBe("# Hello\n");
   });
 
+  it("resource read --json preserves base64 binary content losslessly", async () => {
+    const { stdout, code } = await runCli(
+      ["resource", "read", "--server", "docs", "file:///image.png", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    const parsed = JSON.parse(stdout) as ReadResourceResult;
+    expect(parsed.contents[0].blob).toBe(BINARY_B64);
+  });
+
   it("read defaults to the only server when one is connected", async () => {
     const solo = new ResourceProvider();
     solo.addServer("only", {
@@ -545,10 +587,31 @@ describe("resource CLI — tools-only provider", () => {
   });
 
   it("resource list reports the not-supported error per server", async () => {
-    const { stdout, code } = await runCli(["resource", "list"], env);
-    expect(code).toBe(0);
-    expect(stdout).toContain("plain —");
-    expect(stdout).toMatch(/does not support resources/i);
+    const { stdout, stderr, code } = await runCli(["resource", "list"], env);
+    expect(code).toBe(1);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("plain —");
+    expect(stderr).toMatch(/does not support resources/i);
+  });
+
+  it("resource list --json marks total failure and exits nonzero", async () => {
+    const { stdout, stderr, code } = await runCli(
+      ["resource", "list", "--json"],
+      env,
+    );
+    expect(code).toBe(1);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toMatchObject({
+      kind: "resources",
+      status: "failed",
+      results: [
+        {
+          server: "plain",
+          ok: false,
+          error: { type: "RpcProtocolError", rpcCode: -32601 },
+        },
+      ],
+    });
   });
 
   it("resource read surfaces a friendly not-supported error", async () => {
@@ -558,5 +621,79 @@ describe("resource CLI — tools-only provider", () => {
     );
     expect(code).toBe(1);
     expect(stderr).toMatch(/does not support resources/i);
+  });
+});
+
+describe("resource CLI aggregate failures", () => {
+  class PartiallyFailingProvider extends ResourceProvider {
+    override async listResources(server: string): Promise<ResourceInfo[]> {
+      if (server === "broken") {
+        throw new Error("resource backend unavailable");
+      }
+      return super.listResources(server);
+    }
+  }
+
+  const provider = new PartiallyFailingProvider();
+  const server = new ToolCliServer(provider);
+  let env: NodeJS.ProcessEnv;
+
+  beforeAll(async () => {
+    provider.addServer("working", {
+      resources: [{ uri: "file:///ok.txt", name: "OK" }],
+    });
+    provider.addServer("broken");
+    const result = await server.start();
+    env = {
+      [PORT_ENV_VAR]: String(result.port),
+      [TOKEN_ENV_VAR]: result.token,
+    };
+  });
+
+  afterAll(async () => {
+    await server.stop();
+  });
+
+  it("marks partial JSON results explicitly while retaining successes", async () => {
+    const { stdout, stderr, code } = await runCli(
+      ["resource", "list", "--json"],
+      env,
+    );
+    expect(code).toBe(0);
+    expect(stderr).toBe("");
+    const parsed = JSON.parse(stdout) as {
+      status: string;
+      results: {
+        server: string;
+        ok: boolean;
+        resources?: ResourceInfo[];
+        error?: { message: string; rpcCode: number };
+      }[];
+    };
+    expect(parsed.status).toBe("partial");
+    expect(parsed.results).toEqual([
+      expect.objectContaining({
+        server: "broken",
+        ok: false,
+        error: expect.objectContaining({
+          message: "resource backend unavailable",
+          rpcCode: -32603,
+        }),
+      }),
+      {
+        server: "working",
+        ok: true,
+        resources: [{ uri: "file:///ok.txt", name: "OK" }],
+      },
+    ]);
+  });
+
+  it("warns on stderr for partial human results without corrupting stdout", async () => {
+    const { stdout, stderr, code } = await runCli(["resource", "list"], env);
+    expect(code).toBe(0);
+    expect(stdout).toContain("file:///ok.txt");
+    expect(stdout).not.toContain("resource backend unavailable");
+    expect(stderr).toContain("resource backend unavailable");
+    expect(stderr).toMatch(/partial resource discovery/i);
   });
 });
