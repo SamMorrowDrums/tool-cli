@@ -1,6 +1,6 @@
 {
   "name": "@sammorrowdrums/tool-cli",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Authenticated MCP-to-shell CLI and bridge with progressive tool discovery",
   "license": "MIT",
   "author": "Sam Morrow <info@sam-morrow.com>",

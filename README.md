@@ -530,7 +530,7 @@ The server binds to `127.0.0.1` on a dynamic port. The port and auth token are c
   },
   "serverImplementation": {
     "name": "@sammorrowdrums/tool-cli",
-    "version": "1.0.1"
+    "version": "1.0.2"
   },
   "operations": [
     "getBridgeInfo",

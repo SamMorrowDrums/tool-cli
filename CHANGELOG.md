@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.0.2
+
+### Fixed
+
+- The npm publish job now targets the protected `npm publish` GitHub
+  environment required by the package's Trusted Publisher configuration while
+  retaining OIDC and read-only repository permissions. v1.0.1 remains
+  GitHub-only and was not published to npm because that Trusted
+  Publisher/environment binding was not yet configured; v1.0.2 is the first
+  npm v1 release.
+
 ## 1.0.1
 
 ### Fixed
