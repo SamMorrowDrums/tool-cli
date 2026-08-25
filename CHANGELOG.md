@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 1.0.1
+
+### Fixed
+
+- Package verification now accepts both the array-shaped and object-shaped
+  `npm pack --dry-run --json` output used across supported npm releases, while
+  still requiring exactly one valid package manifest. The v1.0.0 GitHub Release
+  was created, but npm 1.0.0 was never published because npm latest exposed
+  this verifier incompatibility during `prepublishOnly`.
+
 ## 1.0.0
 
 ### Breaking

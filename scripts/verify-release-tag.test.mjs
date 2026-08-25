@@ -17,21 +17,21 @@ function runGuard(tag) {
 }
 
 describe("release tag guard", () => {
-  it("accepts the v1.0.0 tag for the 1.0.0 package", () => {
-    const result = runGuard("v1.0.0");
+  it("accepts the v1.0.1 tag for the 1.0.1 package", () => {
+    const result = runGuard("v1.0.1");
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(
-      "Verified release tag v1.0.0 matches package version 1.0.0.",
+      "Verified release tag v1.0.1 matches package version 1.0.1.",
     );
     expect(result.stderr).toBe("");
   });
 
   it("rejects a tag that does not exactly match package.json", () => {
-    const result = runGuard("v1.0.1");
+    const result = runGuard("v1.0.0");
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).toBe("");
-    expect(result.stderr).toContain("release tag v1.0.1 does not match v1.0.0");
+    expect(result.stderr).toContain("release tag v1.0.0 does not match v1.0.1");
   });
 });
