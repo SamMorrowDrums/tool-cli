@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Documentation
+
+- Replaced the prior themed release framing with an audited integration guide for
+  `@sammorrowdrums/mcpi@0.85.0`, `@sammorrowdrums/mcpi-ext@1.0.0`, and
+  `@sammorrowdrums/tool-cli@1.0.2`.
+- Clarified that agents invoke tool-cli through mcpi's bash tool, that the
+  authenticated bridge credentials are session-scoped, and that tool-cli is an
+  MCP-to-shell on-ramp rather than the shell pipeline substrate.
+- Documented bridge-v1 compatibility, output and error contracts, resource and
+  binary behavior, timeouts, cancellation, and the trusted-local security
+  boundary.
+
 ## 1.0.2
 
 ### Fixed
@@ -69,7 +83,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- `resource read` refinements (the resource feature from 0.5.0 is still unreleased — this supersedes it):
+- `resource read` refinements:
   - The resource URI is now a **positional** argument: `tool-cli resource read [--server <name>] <uri> [--out <path>]`. `--uri <uri>` is still accepted as an alias.
   - **Binary content now requires `--out`.** Reading a base64 `blob` without `--out` is a hard error (exit 1, message on stderr) — tool-cli refuses to write raw binary to stdout. Text still streams to stdout by default (pipeable/greppable).
   - `resource list` now **hides `skill://` URIs** — skills are a separate channel.
@@ -108,7 +122,7 @@ All notable changes to this project will be documented in this file.
 
 ## 0.3.0
 
-- Documentation rewrite (nuclear-football framing, architecture diagram).
+- Documentation rewrite with an architecture diagram.
 
 ## 0.2.0
 
