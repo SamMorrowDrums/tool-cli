@@ -3,7 +3,7 @@ export const BRIDGE_PROTOCOL_MAJOR = 1;
 export const BRIDGE_PROTOCOL_VERSION = "1.0";
 
 export const SERVER_IMPLEMENTATION_NAME = "@sammorrowdrums/tool-cli";
-export const SERVER_IMPLEMENTATION_VERSION = "1.0.2";
+export const SERVER_IMPLEMENTATION_VERSION = "1.0.3";
 
 export const BRIDGE_RPC_OPERATIONS = [
   "getBridgeInfo",

@@ -2,13 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## 1.0.3
 
 ### Documentation
 
 - Replaced the prior themed release framing with an audited integration guide for
   `@sammorrowdrums/mcpi@0.85.0`, `@sammorrowdrums/mcpi-ext@1.0.0`, and
-  `@sammorrowdrums/tool-cli@1.0.2`.
+  `@sammorrowdrums/tool-cli@1.0.3`.
 - Clarified that agents invoke tool-cli through mcpi's bash tool, that the
   authenticated bridge credentials are session-scoped, and that tool-cli is an
   MCP-to-shell on-ramp rather than the shell pipeline substrate.

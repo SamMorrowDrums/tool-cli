@@ -26,7 +26,7 @@ This documentation was audited against the following published versions:
 | -------------------------- | --------- |
 | `@sammorrowdrums/mcpi`     | `0.85.0`  |
 | `@sammorrowdrums/mcpi-ext` | `1.0.0`   |
-| `@sammorrowdrums/tool-cli` | `1.0.2`   |
+| `@sammorrowdrums/tool-cli` | `1.0.3`   |
 | tool-cli bridge protocol   | major `1` |
 
 The standalone tool-cli package requires Node.js `>=22.13.0`. The combined
@@ -39,7 +39,7 @@ are on `PATH`:
 npm install -g \
   @sammorrowdrums/mcpi@0.85.0 \
   @sammorrowdrums/mcpi-ext@1.0.0 \
-  @sammorrowdrums/tool-cli@1.0.2
+  @sammorrowdrums/tool-cli@1.0.3
 ```
 
 Use the
@@ -106,10 +106,10 @@ tool-cli --help
 tool-cli --version
 ```
 
-For `@sammorrowdrums/tool-cli@1.0.2`, `--version` prints:
+For `@sammorrowdrums/tool-cli@1.0.3`, `--version` prints:
 
 ```text
-1.0.2
+1.0.3
 ```
 
 ### Progressive discovery and calls
@@ -426,7 +426,7 @@ from this release identifies itself as:
   },
   "serverImplementation": {
     "name": "@sammorrowdrums/tool-cli",
-    "version": "1.0.2"
+    "version": "1.0.3"
   }
 }
 ```
