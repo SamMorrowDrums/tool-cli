@@ -2,279 +2,335 @@
 
 # tool-cli
 
-> **Experimental.** Part of the [mcpi-ext](https://github.com/SamMorrowDrums/mcpi-ext) experiment.
+`tool-cli` is an authenticated MCP-to-shell on-ramp with progressive
+discovery. It lets an agent harness expose its existing MCP connections to a
+command-line program without turning that program into a separate MCP client or
+a general-purpose execution engine.
 
-For the `1.x` compatibility line, after a `1.x` package is available from npm:
+With `mcpi-ext`, the agent invokes `tool-cli` **through mcpi's `bash` tool**:
 
-```sh
-npm install -g @sammorrowdrums/tool-cli@^1
+```text
+mcpi agent -> bash tool -> tool-cli -> authenticated local bridge -> MCP policy -> MCP server
 ```
 
----
+`tool-cli` is a program, not an LLM-callable tool. Bash and the programs it
+launches remain the pipeline substrate: they own pipes, files, loops, `jq`,
+`grep`, `pandoc`, `ffmpeg`, and other processes. `tool-cli` only discovers MCP
+capabilities, calls them through the bridge, and writes the requested result.
 
-![A glowing briefcase marked 'tool-cli' being passed between hands in a dark corridor, trailing sparks of shell commands](https://raw.githubusercontent.com/SamMorrowDrums/mcpi-ext/main/images/nuclear-mcp-football.webp)
+## Supported mcpi integration
 
-> _The Football is not a weapon. The Football is the authority to use weapons. Whoever holds it can reach any server, call any tool, chain any result — but they must do so deliberately, one command at a time._
+This documentation was audited against the following published versions:
 
----
+| Package                    | Version   |
+| -------------------------- | --------- |
+| `@sammorrowdrums/mcpi`     | `0.85.0`  |
+| `@sammorrowdrums/mcpi-ext` | `1.0.0`   |
+| `@sammorrowdrums/tool-cli` | `1.0.2`   |
+| tool-cli bridge protocol   | major `1` |
 
-## Why tool-cli exists
+The standalone tool-cli package requires Node.js `>=22.13.0`. The combined
+stack requires Node.js `>=22.19.0`, the requirement imposed by mcpi `0.85.0`.
 
-MCP gives agents tools. But the way those tools are exposed — all at once, all their schemas dumped into context — creates a problem. The agent sees everything, pays for everything, and still has to guess which tool to call.
-
-**tool-cli is an authenticated MCP-to-shell on-ramp with progressive discovery.**
-
-The agent already has a shell — tool-cli gives that shell a gateway to every
-connected MCP server. Discovery happens in steps: servers → tools → schemas →
-calls. Each step pays only the tokens it needs. tool-cli emits composable
-stdout, while the host's existing `bash` tool owns pipes, files, process
-execution, and external programs such as `jq`, `pandoc`, or `ffmpeg`.
-
-This is the nuclear football. It bestows executive control to the holder — every tool on every server is one command away. But like the real nuclear football, there's a dual lock. The agent holds the briefcase, but the harness holds the launch authority. The harness can gate calls, log them, or add human-in-the-loop confirmation at a single choke point. No individual actor goes rogue.
-
-That's the design: **bestow executive control to the agent, but keep the safety in the infrastructure**.
-
----
-
-## Where tool-cli fits
-
-The surrounding mcpi experiment has four distinct, capability-shaped
-facilities. Selection is based on the work to perform, not a fixed precedence:
-
-| Facility                   | Responsibility                                                                                                                                          | Owner                                                       |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Skills                     | Portable domain workflow guidance: sequencing, decisions, and constraints. A server-published skill cannot direct host execution without host approval. | The server publishes; the host activates and enforces trust |
-| Code mode                  | Sandboxed deterministic computation and control flow over eligible read-only MCP tools/results, without filesystem, network, or process access.         | `mcpi-ext`                                                  |
-| tool-cli                   | Authenticated MCP discovery/calls exposed through the host's `bash` tool as `tool-cli ...`, with machine-composable stdout.                             | This package; `mcpi-ext` hosts the bridge/policy boundary   |
-| Bash and external programs | Artifact, document, and data pipelines using pipes, files, `jq`, `pandoc`, `ffmpeg`, and other processes.                                               | mcpi core and the host environment                          |
-
-Use a skill for domain workflow, code mode for exact sandboxed computation,
-tool-cli when MCP data must enter a shell pipeline, and bash/external programs
-for filesystem or process transformation. A pipeline may combine facilities,
-for example `tool-cli ... | jq ...` followed by `pandoc`, but tool-cli itself is
-not a pipeline engine and never launches those external programs.
-
----
-
-## Usage
-
-Discovery is progressive — each step reveals the next:
+Install the audited versions globally so both `mcpi` and the `tool-cli` binary
+are on `PATH`:
 
 ```sh
-tool-cli                                     # List connected MCP servers
-tool-cli github                              # List tools on a server
-tool-cli github search_code                  # Show schema for a tool
-tool-cli github search_code --json           # Full, lossless discovered tool metadata/schema
-tool-cli github search_code '{"query":"auth"}' # Call a tool
-tool-cli github search_code '{"query":"auth"}' --json # Full, lossless call result
-tool-cli --help                              # Local help; no bridge required
-tool-cli --version                           # Local CLI version; no bridge required
+npm install -g \
+  @sammorrowdrums/mcpi@0.85.0 \
+  @sammorrowdrums/mcpi-ext@1.0.0 \
+  @sammorrowdrums/tool-cli@1.0.2
 ```
 
-Before any remote command, the CLI performs the authenticated
-`getBridgeInfo` handshake and requires bridge protocol major `1`. `--help` and
-`--version` are intentionally local-only and work without `TOOL_CLI_PORT`,
-`TOOL_CLI_TOKEN`, or a running bridge.
+Use the
+[current mcpi-ext Quick Start](https://github.com/SamMorrowDrums/mcpi-ext#quick-start)
+for MCP server configuration and startup. To reproduce the exact integration
+audited here, use the
+[mcpi-ext 1.0.0 Quick Start](https://github.com/SamMorrowDrums/mcpi-ext/blob/v1.0.0/README.md#quick-start).
 
-The `1.x` CLI requires a bridge that implements bridge protocol major `1`;
-legacy bridges without `getBridgeInfo` are intentionally rejected. Upgrade the
-CLI package and embedding harness together when adopting protocol-major
-changes. Within major `1`, bridges may add advertised operations and
-capabilities, and clients must ignore fields they do not understand.
+`mcpi-ext@1.0.0` depends on `@sammorrowdrums/tool-cli@^1.0.2` for the bridge
+library. Installing `tool-cli` explicitly at the top level also makes its CLI
+binary available to commands launched by mcpi.
 
-### Shell composability
+## Quick start with mcpi-ext
 
-This is a CLI. It composes like one.
+After installing the three packages, configure MCP servers as described by the
+[mcpi-ext Quick Start](https://github.com/SamMorrowDrums/mcpi-ext#quick-start),
+then start mcpi:
+
+```sh
+mcpi \
+  --extension "$(npm root -g)/@sammorrowdrums/mcpi-ext/dist/index.js" \
+  --mcp-config ~/.config/mcpi-ext/mcp.json
+```
+
+During session startup, `mcpi-ext@1.0.0`:
+
+1. Starts a `ToolCliServer` inside the extension process.
+2. Authenticates to it and verifies the complete bridge-v1 surface.
+3. Exposes `TOOL_CLI_HOST`, `TOOL_CLI_PORT`, and `TOOL_CLI_TOKEN` to
+   session-spawned commands only after verification succeeds.
+4. Routes every tool and resource operation back through its `McpPolicy`
+   authorization boundary.
+5. Removes usable credentials and stops the bridge when the session shuts
+   down.
+
+The agent can then call mcpi's `bash` tool with commands such as:
+
+```sh
+tool-cli
+tool-cli github
+tool-cli github search_code
+tool-cli github search_code '{"query":"auth"}'
+```
+
+These examples describe commands run by the session's bash tool. Installing the
+binary globally does **not** grant access to a running session. An unrelated
+terminal normally lacks the session's random port and bearer token, so it
+cannot locate or authenticate to the bridge.
+
+In mcpi `0.85.0`, values set with `pi.setEnv()` are applied to subprocesses
+spawned for that session, including the LLM-callable bash tool and `pi.exec()`.
+They are not written to mcpi's own `process.env`. See mcpi's
+[extension-set session variables documentation](https://github.com/SamMorrowDrums/mcpi/blob/v0.85.0/packages/coding-agent/docs/environment-variables.md#extension-set-session-variables).
+
+## CLI usage
+
+### Local metadata
+
+These commands do not connect to a bridge and work without any `TOOL_CLI_*`
+variables:
+
+```sh
+tool-cli --help
+tool-cli --version
+```
+
+For `@sammorrowdrums/tool-cli@1.0.2`, `--version` prints:
+
+```text
+1.0.2
+```
+
+### Progressive discovery and calls
+
+All other commands require an authenticated bridge:
+
+```sh
+tool-cli                                      # List connected MCP servers
+tool-cli github                               # List tools on one server
+tool-cli github search_code                   # Describe one tool
+tool-cli github search_code --json            # Full discovered metadata/schema
+tool-cli github search_code '{"query":"auth"}' # Call the tool
+tool-cli github search_code '{"query":"auth"}' --json
+```
+
+Before each remote command, the CLI calls the authenticated `getBridgeInfo`
+method and requires bridge protocol name `tool-cli-bridge` with major version
+`1`. A legacy bridge without `getBridgeInfo`, or a bridge with a different
+protocol major, is rejected. There is no compatibility fallback.
+
+The standalone client validates the protocol name and major. The audited
+`mcpi-ext@1.0.0` integration performs a stricter startup check before exposing
+credentials: it requires the full operation list, authentication, discovery,
+calls, input validation, all resource operations, provider cancellation,
+implementation identity, and upstream MCP diagnostics.
+
+### Shell composition
+
+Because the host bash tool owns process execution, normal shell composition
+works without tool-cli becoming the pipeline engine:
 
 ```sh
 tool-cli github search_code '{"query":"auth"}' | jq '.items[].path'
 
-tool-cli myserver list_items '{}' | jq -r '.[0].id' | \
-  xargs -I{} tool-cli myserver get_item '{"id":"{}"}'
+tool-cli inventory list_items '{}' |
+  jq -r '.[].id' |
+  xargs -I{} tool-cli inventory get_item '{"id":"{}"}'
 
-for city in London Tokyo Paris; do
-  echo "=== $city ==="
-  tool-cli weather check_weather '{"city":"'"$city"'"}'
-done
-
-tool-cli github list_issues '{"repo":"owner/repo"}' --out /tmp/issues.json
+tool-cli github list_issues '{"repo":"owner/repo"}' \
+  --out /tmp/issues.json
 ```
 
-Errors go to stderr with a nonzero exit code, leaving stdout clean for pipes,
-`jq`, and command substitution. `--json` is the lossless form: tool
-descriptions retain the complete discovered input/output schemas and metadata,
-and calls retain the complete result object (including modern MCP content,
-resource links, embedded resources, extension fields, and structured content).
+## Output, errors, and timeouts
 
-Bridge requests time out after 30 seconds by default. Use
-`--timeout <milliseconds>` or `TOOL_CLI_TIMEOUT_MS` (maximum 300000 ms) to
-change the bound. Programmatic callers can pass `{ timeoutMs, signal }` to
-`rpcCall()` or `getBridgeInfo()`; cancellation is propagated to providers as an
-`AbortSignal`.
+### Tool output
 
-### Resources
+- Human discovery output is a compact summary intended for reading.
+- Human call output prefers `structuredContent` when it is present. Otherwise,
+  text content is printed as text and non-text MCP content blocks are serialized
+  as JSON.
+- `--json` is the lossless form. Tool descriptions retain complete schemas,
+  annotations, icons, and extension fields. Tool calls retain the complete
+  provider result, including `content`, `structuredContent`, `isError`,
+  resource links, embedded resources, image/audio blocks, and extension fields.
+- `--out <path>` on a tool call writes the selected UTF-8 output to the file and
+  prints a short write summary instead of the result body.
 
-MCP resources and resource templates are reachable through the `resource`
-subcommand group, multi-server by default. (`resource` is a reserved word, so a
-server literally named `resource` is unsupported — acceptable here.)
+### Error behavior
+
+Ordinary CLI, transport, authentication, compatibility, validation, and tool
+errors exit nonzero and write diagnostics to stderr. Stdout stays empty so a
+failed call cannot masquerade as valid pipeline data. An MCP tool result with
+`isError: true` is also treated as a failed command; with `--json`, the complete
+error result is written to stderr.
+
+Multi-server resource discovery has one intentional machine-output exception:
+`resource list --json` and `resource templates --json` always emit their
+aggregate result to stdout. The result contains `status: "complete"`,
+`"partial"`, or `"failed"` and an `ok` flag for each server. Partial success
+exits zero; complete failure exits nonzero.
+
+The client library exposes typed failures:
+
+- `RpcHttpError`
+- `RpcProtocolError`
+- `RpcNonJsonResponseError`
+- `RpcInvalidResponseError`
+- `RpcTransportError`
+- `RpcTimeoutError`
+- `RpcAbortError`
+- `BridgeCompatibilityError`
+
+### Timeouts and cancellation
+
+Every bridge request has a finite 30-second default timeout:
 
 ```sh
-tool-cli resource list                               # List resources across ALL servers, grouped by server
-tool-cli resource list --server github               # List one server's resources
-tool-cli resource templates                          # List resource templates (all servers)
-tool-cli resource templates --server github          # List one server's templates
-
-tool-cli resource read --server github "file:///readme.md"                  # Print text to stdout (pipeable)
-tool-cli resource read --server github "file:///readme.md" | grep foo       # Stream + grep
-tool-cli resource read --server github "asset://logo" --out logo.png        # Write body to a file
-tool-cli resource read --server github "asset://logo" --meta                # Metadata only
-tool-cli resource read --server github "file:///readme.md" --json           # Machine-readable
+tool-cli github search_code '{"query":"auth"}' --timeout 60000
+TOOL_CLI_TIMEOUT_MS=60000 tool-cli github search_code '{"query":"auth"}'
 ```
 
-Behaviour notes:
+The accepted range is `1` to `300000` milliseconds. Programmatic callers can
+pass `{ timeoutMs, signal }` to `rpcCall()` and `getBridgeInfo()`. CLI
+termination and client cancellation abort the HTTP request; compatible bridges
+receive an `AbortSignal` for asynchronous tool and resource provider methods.
 
-- **Multi-server:** `list` / `templates` with no `--server` query every connected server and group the output by server, mirroring how bare `tool-cli` lists servers.
-- **Aggregate failures:** complete multi-server failure exits nonzero. Partial success exits zero, prints successful human results to stdout and warnings to stderr, and is explicit in JSON as `{ status: "partial", results: [...] }`. JSON entries include `ok: true|false` and typed error metadata.
-- **Server resolution for `read`:** if exactly one server is connected, `--server` is optional; with multiple servers it is required (the error lists the connected server names).
-- **`<uri>` is positional** (`resource read --server <name> <uri>`); `--uri <uri>` is still accepted as an alias.
-- **Text streams to stdout** by default — pipeable and greppable.
-- **Binary content requires `--out` for human output:** a base64 `blob` is never dumped as a raw body. `--json` remains lossless and includes the base64 field; `--out <path>` writes decoded raw bytes.
-- **`--out`:** writes the body to the file (text as-is, binary decoded) and prints a one-line metadata summary plus the path instead of the body — parallels `--out` for large tool results.
-- **`skill://` URIs are hidden from `resource list` and refused by `resource read`** — skills are a separate channel; `read` rejects a `skill://` URI without contacting the server.
-- Resources are read-only; no HITL gating is involved.
+## Resources
 
-Providers that don't implement resources keep working as tools-only — the new
-`ToolProvider` methods (`listResources`, `listResourceTemplates`,
-`readResource`) are optional, and the server returns a friendly
-"does not support resources" error when they're absent.
+The bridge-v1 resource surface is read-only: it lists resources, lists
+templates, and reads resource content.
 
----
+```sh
+tool-cli resource list
+tool-cli resource list --server docs
+tool-cli resource templates
+tool-cli resource templates --server docs
 
-## Security — The Dual Lock and Trusted-Local Boundary
+tool-cli resource read --server docs file:///readme.md
+tool-cli resource read --server docs file:///readme.md --json
+tool-cli resource read --server docs file:///readme.md --meta
+tool-cli resource read --server media asset://logo --out logo.png
+```
 
-> _They pass the Football to the terminal. It is heavy with potential. Every tool on every server is one command away — but to trigger the tool, the harness must allow it._
+Behavior:
 
-The server uses token-based authentication and dynamic port allocation:
+- Without `--server`, `list` and `templates` query every connected server and
+  group results by server.
+- `read` can omit `--server` only when exactly one server is connected.
+- The URI is positional. `--uri <uri>` remains an accepted alias.
+- Text content streams to stdout by default.
+- Human output never writes a base64 blob or decoded binary bytes to stdout.
+  Binary content requires `--out <path>`.
+- `--out` writes text as UTF-8 and base64-decodes binary resource content to raw
+  bytes.
+- `--json` preserves the complete resource result, including base64 `blob`
+  fields.
+- `--meta` prints content metadata without printing or writing the body.
+- Partial multi-server success keeps successful results and identifies each
+  failed server. Human output sends warnings to stderr; JSON output records
+  typed per-server errors.
+- `resource` is a reserved top-level subcommand, so a server literally named
+  `resource` cannot be addressed by the CLI grammar.
 
-1. `start()` binds to a random available port and generates a 32-byte session token
-2. Returns `{ port, token }` — the caller sets these as `TOOL_CLI_PORT` and `TOOL_CLI_TOKEN` env vars for agent subprocesses
-3. Every request must include `Authorization: Bearer <token>` — rejected with 401 otherwise
+The CLI hides `skill://` entries from `resource list` and refuses to read a
+`skill://` URI. That is an isolation rule, not skill support. Skills and
+`load_skill` are features of `mcpi-ext`, not of tool-cli. The audited
+`mcpi-ext@1.0.0` policy also blocks resources declared as skill-owned through
+its skills protocol, including skill resources that use another URI scheme.
 
-This means:
+Providers may omit resource methods when embedding `ToolCliServer` elsewhere.
+The bridge advertises the resulting capability flags and returns a clear
+not-supported error for unavailable operations. `mcpi-ext@1.0.0` requires all
+three resource methods before it advertises tool-cli as available.
 
-- **Concurrent sessions** work — each gets its own port + token
-- **Random processes can't call tools** — they don't have the token
-- **Cross-session isolation** — one agent can't reach another's tools
-- **No individual actor goes rogue** — the agent has reach, the harness has authority. Both must agree for the launch to proceed
+## Security boundary
 
-The bridge is a **trusted-local IPC boundary**, not a general remote API. The
-short-lived bearer token is a session capability, not encryption: any process
-that can read the harness environment can use it for the token's lifetime. Do
-not log, persist, commit, or forward the token, and scope its environment to the
-intended child process. The transport is plain HTTP and does not provide TLS,
-host identity, durable credentials, replay protection, or multi-tenant
-authorization. Keep it on loopback or inside an equivalently trusted
-container/VM network. If `TOOL_CLI_BIND_HOST` exposes it beyond that boundary,
-the embedding harness is responsible for network isolation, token lifetime,
-and secret handling.
+`ToolCliServer.start()` binds to a random port and generates a random 32-byte
+session token. Every request, including `getBridgeInfo`, must carry that token
+as an HTTP bearer credential.
 
-tool-cli never launches arbitrary external programs. It is an MCP-to-shell
-on-ramp: the harness starts the authenticated bridge, and an agent or user
-invokes the CLI through an existing shell such as `bash`.
+Bearer authentication answers only "does this process possess the session
+capability?" It is not tool authorization. A process that obtains the token can
+attempt every operation advertised by that bridge. The embedding provider or
+harness must decide which servers, tools, arguments, and resources are allowed.
 
-Resource discovery ([#1](https://github.com/SamMorrowDrums/tool-cli/issues/1)) is supported — see [Resources](#resources) above.
+The server itself restricts calls to discovered servers and tools and validates
+arguments against each tool's complete discovered `inputSchema` before provider
+dispatch. The audited `mcpi-ext@1.0.0` provider adds the policy boundary: it
+exposes only policy-visible schemas, reauthorizes every call, enforces skill
+gating and resource isolation, requests confirmation for non-read-only tools,
+and audits allowed and denied operations.
 
----
+The bridge is trusted-local IPC, not a remote service:
 
-## Architecture — How the Harness Connection Works
+- HTTP is unencrypted and supplies no TLS identity, durable credentials, replay
+  protection, or multi-tenant authorization.
+- Any process that can read the session's environment can use the bearer token
+  for its lifetime. Do not log, persist, commit, copy, or forward it.
+- Keep the server on loopback unless an equivalent container or VM network
+  boundary is in place.
+- `mcpi-ext@1.0.0` pins bridge verification to loopback, masks inherited
+  `TOOL_CLI_*` credentials until verification succeeds, and strips all
+  `TOOL_CLI_*` variables from stdio MCP child environments.
 
-The CLI doesn't connect to MCP servers directly. It speaks authenticated
-JSON-RPC to a lightweight HTTP server that runs _inside_ the agent harness.
-This is the harness exposing its MCP connections over trusted-local IPC, with
-the session bearer token as the second lock.
+Advanced cross-network-namespace deployments can override the two hosts:
+
+| Variable             | Used by | Default     |
+| -------------------- | ------- | ----------- |
+| `TOOL_CLI_BIND_HOST` | server  | `127.0.0.1` |
+| `TOOL_CLI_HOST`      | client  | `127.0.0.1` |
+
+Binding outside loopback widens who can attempt authentication. The embedding
+harness is then responsible for network isolation, secret handling, and token
+lifetime.
+
+## Architecture
+
+The CLI does not connect directly to MCP servers. It speaks authenticated
+JSON-RPC 2.0 over HTTP to a bridge embedded in the agent harness.
 
 ```mermaid
 flowchart LR
-    subgraph Agent Shell
-        CLI["tool-cli\n(CLI binary)"]
-    end
-
-    subgraph Agent Harness
-        RPC["ToolCliServer\n(JSON-RPC over HTTP)"]
-        MCM["MCP Client Manager"]
-        HITL["HITL / Gating\n(annotations, confirmation)"]
-        RPC -->|"dispatch"| HITL
-        HITL -->|"allowed"| MCM
-    end
-
-    CLI -->|"Bearer token\nover localhost"| RPC
-    MCM --> S1["MCP Server (stdio)"]
-    MCM --> S2["MCP Server (stdio)"]
-    MCM --> S3["MCP Server (HTTP)"]
+    Agent["Agent"] -->|"calls host bash tool"| Bash["bash"]
+    Bash -->|"runs tool-cli ..."| CLI["tool-cli"]
+    CLI -->|"authenticated bridge v1"| Bridge["ToolCliServer in mcpi-ext"]
+    Bridge -->|"provider dispatch"| Policy["McpPolicy"]
+    Policy -->|"authorized MCP request"| MCP["MCP server"]
 ```
 
-Every call — whether from the CLI, from a programmatic client, or from sandboxed code — routes back through the harness. This gives you:
+The separation is deliberate:
 
-- **Agent activity logging preserved** — because calls flow through the harness, not around it, the existing agent audit trail captures every tool invocation. Nothing bypasses the log
-- **Human-in-the-loop at one point** — the harness can check tool annotations (`readOnlyHint`, `destructiveHint`) and gate destructive calls through user confirmation
-- **No special setup** — the harness already manages MCP connections. tool-cli just gives the agent shell access to them
+- The harness owns MCP connections, policy, confirmation, and audit.
+- The bridge library exposes a narrow authenticated RPC surface.
+- The CLI turns that surface into stdout, stderr, files requested with
+  `--out`, and process exit codes.
+- Bash remains responsible for all external programs and persistent shell
+  effects.
+
+## Library API
+
+The package has three supported entry points:
 
 ```typescript
-const { port, token } = await server.start();
-// Set env vars so agent-spawned bash/tool-cli can authenticate
-pi.setEnv("TOOL_CLI_PORT", String(port));
-pi.setEnv("TOOL_CLI_TOKEN", token);
-```
-
-The CLI and `rpcCall()` client read both from environment automatically.
-Remote CLI commands first call `getBridgeInfo` and reject a different bridge
-protocol name or major before discovery/calls.
-
-### Sandboxed / cross-host setups
-
-By default the server binds on `127.0.0.1` and the client connects to `127.0.0.1` — keeping everything on a single loopback. If you're running the agent (which invokes `tool-cli`) inside a container or VM while the harness server runs on the host, the two `127.0.0.1`s refer to different network namespaces and the connection will fail. Two env vars override the host on each side:
-
-| Var                  | Side   | Default     | Use when                                                                |
-| -------------------- | ------ | ----------- | ----------------------------------------------------------------------- |
-| `TOOL_CLI_BIND_HOST` | server | `127.0.0.1` | the server needs to listen on a non-loopback interface (e.g. `0.0.0.0`) |
-| `TOOL_CLI_HOST`      | client | `127.0.0.1` | the client needs to reach the server at a different address             |
-
-```sh
-# Host: bind on all interfaces so the container can reach in
-TOOL_CLI_BIND_HOST=0.0.0.0 your-harness
-
-# Container: point the CLI/client at the host
-TOOL_CLI_HOST=host.docker.internal \
-TOOL_CLI_PORT=… \
-TOOL_CLI_TOKEN=… \
-  tool-cli github search_code '{"query":"auth"}'
-```
-
-The bearer-token check still applies on every request — exposing the bind host beyond the loopback only widens reachability, not the auth model. Make sure the surrounding network is appropriately sandboxed.
-
----
-
-## Package Structure
-
-Three entry points, consumable independently:
-
-```typescript
-// Everything (server + client + types)
 import { ToolCliServer, rpcCall } from "@sammorrowdrums/tool-cli";
-
-// Server only — for building a harness that serves tool-cli requests
 import { ToolCliServer } from "@sammorrowdrums/tool-cli/server";
-import type { ToolProvider } from "@sammorrowdrums/tool-cli/server";
-
-// Client only — for calling a running tool-cli server programmatically
 import { rpcCall } from "@sammorrowdrums/tool-cli/client";
 ```
 
----
+### Embedding a bridge
 
-## ToolProvider Interface
-
-The server takes a **`ToolProvider`** — a simple interface anyone can implement to bridge tool-cli to their MCP client, agent harness, or tool registry.
+Implement `ToolProvider` around an existing MCP client or policy layer:
 
 ```typescript
 import { ToolCliServer } from "@sammorrowdrums/tool-cli/server";
@@ -282,32 +338,34 @@ import type { ToolProvider } from "@sammorrowdrums/tool-cli/server";
 
 const provider: ToolProvider = {
   getServerNames() {
-    return ["my-server"];
+    return ["docs"];
   },
   getTools(server) {
-    return [
-      {
-        name: "search",
-        description: "Search documents",
-        inputSchema: {
-          type: "object",
-          properties: { query: { type: "string" } },
-          required: ["query"],
-        },
-      },
-    ];
+    return toolRegistry.getTools(server);
   },
-  async callTool(server, tool, args) {
-    const result = await myMcpClient.callTool(server, tool, args);
-    return { content: result.content };
+  async callTool(server, tool, args, context) {
+    return mcpPolicy.callTool(server, tool, args, context?.signal);
+  },
+  async listResources(server, context) {
+    return mcpPolicy.listResources(server, context?.signal);
+  },
+  async listResourceTemplates(server, context) {
+    return mcpPolicy.listResourceTemplates(server, context?.signal);
+  },
+  async readResource(server, uri, context) {
+    return mcpPolicy.readResource(server, uri, context?.signal);
   },
 };
 
 const server = new ToolCliServer(provider);
-await server.start();
+const { port, token } = await server.start();
 ```
 
-The full interface:
+The caller must place `port` and `token` in the intended child process
+environment as `TOOL_CLI_PORT` and `TOOL_CLI_TOKEN`. Do not copy them into the
+parent process environment unless the parent itself is the intended client.
+
+`ToolProvider` has three required methods:
 
 ```typescript
 interface ToolProvider {
@@ -319,11 +377,8 @@ interface ToolProvider {
     args: Record<string, unknown>,
     context?: { signal: AbortSignal },
   ): Promise<CallToolResult>;
-  getUpstreamMcpSummary?(): {
-    protocolVersion?: string;
-    implementation?: { name: string; version?: string };
-    capabilities?: Record<string, unknown>;
-  };
+
+  getUpstreamMcpSummary?(): UpstreamMcpSummary | undefined;
   listResources?(
     server: string,
     context?: { signal: AbortSignal },
@@ -338,188 +393,29 @@ interface ToolProvider {
     context?: { signal: AbortSignal },
   ): Promise<ReadResourceResult>;
 }
-
-interface ToolInfo {
-  name: string;
-  description?: string;
-  inputSchema: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
-  annotations?: Record<string, unknown>;
-}
-
-interface CallToolResult {
-  content: unknown[];
-  isError?: boolean;
-  structuredContent?: unknown;
-  [key: string]: unknown;
-}
 ```
 
-`listResources`, `listResourceTemplates`, and `readResource` also receive the
-optional request context with its cancellation signal. Older providers remain
-source-compatible because all context and resource methods are optional.
+Tool metadata and results are open to extension fields so modern MCP content is
+preserved rather than narrowed. Input validation supports JSON Schema 2020-12,
+2019-09, and draft-07, including standard formats.
 
-The bridge validates both the requested server/tool and the arguments against
-the exact `inputSchema` returned by `getTools(server)` before
-`provider.callTool` runs. Validation supports JSON Schema 2020-12 (default),
-2019-09, and draft-07, including the standard format vocabulary. Unknown tools
-and invalid arguments return JSON-RPC `-32602` with structured `data`; an
-invalid discovered schema returns `-32603`.
+### Bridge protocol v1
 
----
+The current operation surface is:
 
-## Implementing a Server
+| Method                  | Params                        | Result                                             |
+| ----------------------- | ----------------------------- | -------------------------------------------------- |
+| `getBridgeInfo`         | `{}`                          | Protocol, implementation, operations, capabilities |
+| `listServers`           | `{}`                          | Connected server summaries                         |
+| `listTools`             | `{ server }`                  | Tool summaries for one server                      |
+| `describeTool`          | `{ server, tool }`            | Complete discovered tool metadata                  |
+| `callTool`              | `{ server, tool, arguments }` | Complete provider tool result                      |
+| `listResources`         | `{ server }`                  | Complete resource list                             |
+| `listResourceTemplates` | `{ server }`                  | Complete resource template list                    |
+| `readResource`          | `{ server, uri }`             | Complete resource contents                         |
 
-The `ToolProvider` interface is intentionally minimal — three methods. Here's guidance for different integration scenarios:
-
-### MCP SDK (TypeScript/JavaScript)
-
-If you're using `@modelcontextprotocol/sdk`, the provider wraps your `Client` instances:
-
-```typescript
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-
-class McpToolProvider implements ToolProvider {
-  private clients = new Map<string, { client: Client; tools: ToolInfo[] }>();
-
-  getServerNames() {
-    return [...this.clients.keys()];
-  }
-  getTools(server) {
-    return this.clients.get(server)?.tools ?? [];
-  }
-  async callTool(server, tool, args) {
-    const { client } = this.clients.get(server)!;
-    const result = await client.callTool({ name: tool, arguments: args });
-    return {
-      content: result.content as unknown[],
-      structuredContent: result.structuredContent as
-        Record<string, unknown> | undefined,
-    };
-  }
-}
-```
-
-### Other languages — implement the JSON-RPC server directly
-
-You don't need this package to run a tool-cli compatible server. Implement the
-versioned JSON-RPC protocol over authenticated HTTP in any language. A
-compatible bridge must implement `getBridgeInfo`; the other operations are
-advertised by the handshake:
-
-**Go:**
-
-```go
-func handleRPC(w http.ResponseWriter, r *http.Request) {
-    var req struct {
-        Method string          `json:"method"`
-        Params json.RawMessage `json:"params"`
-        ID     int             `json:"id"`
-    }
-    json.NewDecoder(r.Body).Decode(&req)
-
-    switch req.method {
-    case "getBridgeInfo": // return the bridge protocol v1 contract
-    case "listServers":  // return { servers: [...] }
-    case "listTools":    // parse server from params, return tools
-    case "describeTool": // parse server+tool, return schema
-    case "callTool":     // parse server+tool+arguments, call MCP, return result
-    }
-}
-```
-
-**Python (Flask):**
-
-```python
-from flask import Flask, request, jsonify
-
-app = Flask(__name__)
-
-@app.route("/", methods=["POST"])
-def rpc():
-    req = request.json
-    method = req["method"]
-    params = req.get("params", {})
-
-    if method == "listServers":
-        result = {"servers": [{"name": "my-server", "toolCount": 5, "examples": ["search"]}]}
-    elif method == "listTools":
-        result = {"server": params["server"], "tools": [...]}
-    elif method == "describeTool":
-        result = {"name": params["tool"], "description": "...", "inputSchema": {...}}
-    elif method == "callTool":
-        result = call_mcp_tool(params["server"], params["tool"], params.get("arguments", {}))
-    else:
-        return jsonify({"jsonrpc": "2.0", "error": {"code": -32601, "message": "Not found"}, "id": req["id"]})
-
-    return jsonify({"jsonrpc": "2.0", "result": result, "id": req["id"]})
-```
-
-**Rust:**
-
-```rust
-// Use axum, actix-web, or any HTTP framework
-// Parse JSON-RPC request, match on method, return JSON-RPC response
-// The 4 methods map directly to your MCP client's list/describe/call operations
-```
-
-### Key implementation notes
-
-- **Bind to `127.0.0.1` only** unless the embedding harness provides an equivalent trusted network boundary
-- **`TOOL_CLI_PORT` env var** — the CLI reads this to find the server
-- **`TOOL_CLI_TOKEN` env var** — every operation, including `getBridgeInfo`, requires `Authorization: Bearer <token>`
-- **Handshake first** — return bridge protocol name `tool-cli-bridge`, major `1`, version `1.0`, server implementation name/version, operation list, and capabilities
-- **`structuredContent`** — if the MCP tool returns structured output, include it alongside `content`. The CLI prefers it for JSON piping
-- **Error responses** — use JSON-RPC error codes: `-32602` for invalid params, `-32601` for unknown methods, `-32603` for internal errors
-- **Tool annotations** — include `readOnlyHint`, `destructiveHint` etc. in `describeTool` responses. The harness can use these for HITL gating
-
----
-
-## Writing Clients in Other Languages
-
-The JSON-RPC protocol is callable from any language. The CLI reads `TOOL_CLI_PORT` and `TOOL_CLI_TOKEN` from environment:
-
-```python
-import os, requests
-
-port = os.environ["TOOL_CLI_PORT"]
-token = os.environ["TOOL_CLI_TOKEN"]
-
-def tool_cli(method, **params):
-    r = requests.post(f"http://127.0.0.1:{port}", json={
-        "jsonrpc": "2.0", "method": method, "params": params, "id": 1
-    }, headers={"Authorization": f"Bearer {token}"})
-    result = r.json()
-    if "error" in result:
-        raise Exception(result["error"]["message"])
-    return result["result"]
-
-bridge = tool_cli("getBridgeInfo")
-assert bridge["bridgeProtocol"]["name"] == "tool-cli-bridge"
-assert bridge["bridgeProtocol"]["major"] == 1
-servers = tool_cli("listServers")
-tools = tool_cli("listTools", server="github")
-result = tool_cli("callTool", server="github", tool="get_me", arguments={})
-```
-
----
-
-## JSON-RPC Protocol
-
-The server binds to `127.0.0.1` on a dynamic port. The port and auth token are communicated via `TOOL_CLI_PORT` and `TOOL_CLI_TOKEN` environment variables. Every request is authenticated.
-
-| Method                  | Params                        | Returns                                                                           |
-| ----------------------- | ----------------------------- | --------------------------------------------------------------------------------- |
-| `getBridgeInfo`         | —                             | Bridge protocol/server identity, operations, capabilities, optional `upstreamMcp` |
-| `listServers`           | —                             | `{ servers: [{ name, toolCount, examples }] }`                                    |
-| `listTools`             | `{ server }`                  | `{ server, tools: [{ name, description, hasStructuredOutput }] }`                 |
-| `describeTool`          | `{ server, tool }`            | Complete discovered tool metadata and schemas                                     |
-| `callTool`              | `{ server, tool, arguments }` | Complete provider result; arguments validated before dispatch                     |
-| `listResources`         | `{ server }`                  | `{ server, resources }`                                                           |
-| `listResourceTemplates` | `{ server }`                  | `{ server, templates }`                                                           |
-| `readResource`          | `{ server, uri }`             | Complete `{ contents, ... }` provider result                                      |
-
-### Bridge protocol v1 handshake
+Every request is JSON-RPC 2.0 over authenticated HTTP. A bridge-v1 handshake
+from this release identifies itself as:
 
 ```json
 {
@@ -531,89 +427,14 @@ The server binds to `127.0.0.1` on a dynamic port. The port and auth token are c
   "serverImplementation": {
     "name": "@sammorrowdrums/tool-cli",
     "version": "1.0.2"
-  },
-  "operations": [
-    "getBridgeInfo",
-    "listServers",
-    "listTools",
-    "describeTool",
-    "callTool",
-    "listResources",
-    "listResourceTemplates",
-    "readResource"
-  ],
-  "capabilities": {
-    "authentication": { "required": true, "scheme": "bearer" },
-    "tools": {
-      "discovery": true,
-      "calls": true,
-      "inputSchemaValidation": true,
-      "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
-      "supportedJsonSchemaDialects": [
-        "https://json-schema.org/draft/2020-12/schema",
-        "https://json-schema.org/draft/2019-09/schema",
-        "http://json-schema.org/draft-07/schema#"
-      ]
-    },
-    "resources": { "list": true, "templates": true, "read": true },
-    "cancellation": { "providerAbortSignal": true }
-  },
-  "upstreamMcp": {
-    "protocolVersion": "2025-06-18",
-    "implementation": { "name": "embedding-harness", "version": "1.2.3" },
-    "capabilities": {}
   }
 }
 ```
 
-`upstreamMcp` is optional and intentionally open for MCP-era implementation,
-protocol, and capability summaries supplied by the embedding provider.
-
-Protocol-major changes are breaking. Additive operation/capability fields may
-arrive within major `1`; consumers must ignore unknown fields. Current CLIs are
-deliberately incompatible with legacy bridges that do not implement
-`getBridgeInfo`—upgrade the CLI package and embedding harness together.
-
-### Migrating from 0.x
-
-1. Upgrade the embedding harness so it serves the authenticated
-   `getBridgeInfo` protocol v1 contract and preserves complete tool/resource
-   results.
-2. Deploy the harness and CLI together; a `1.x` CLI does not fall back to an
-   older bridge.
-3. After the `1.x` package is available from npm, install or update with
-   `npm install -g @sammorrowdrums/tool-cli@^1`.
-
-### Embedding-harness counterpart requirements
-
-An embedding harness such as mcpi-ext must:
-
-1. Upgrade its tool-cli server dependency so the authenticated
-   `getBridgeInfo` method and bridge protocol v1 metadata are served.
-2. Keep `TOOL_CLI_PORT` and the per-session `TOOL_CLI_TOKEN` in the shell
-   environment; no handshake endpoint is unauthenticated.
-3. Return the exact policy-visible/discovered `ToolInfo.inputSchema` from
-   `getTools(server)`. The bridge now rejects unknown servers/tools and invalid
-   arguments before `callTool`, so the discovery view and call boundary must
-   describe the same allowed tool set.
-4. Optionally implement `getUpstreamMcpSummary()` with the current upstream MCP
-   protocol version, implementation identity/version, and capabilities.
-5. Accept the optional provider request context and forward or observe
-   `context.signal` in tool/resource calls where the upstream MCP client
-   supports cancellation.
-6. Preserve complete MCP tool/resource results rather than narrowing content
-   block variants or extension fields before returning them to tool-cli.
-
-### Typed client failures
-
-The client exports `RpcHttpError` (status, body, content type, optional nested
-RPC code/data), `RpcProtocolError` (JSON-RPC code/data/id),
-`RpcNonJsonResponseError` (status/body/content type),
-`RpcInvalidResponseError`, `RpcTransportError`, `RpcTimeoutError`,
-`RpcAbortError`, and `BridgeCompatibilityError`. This keeps policy and
-transport failures inspectable without writing diagnostics to stdout.
-
----
+Protocol-major changes are breaking. A `1.x` client rejects a bridge with a
+different major and does not fall back to a pre-handshake protocol. Additive
+fields may appear within major `1`; consumers must ignore fields they do not
+understand.
 
 ## License
 
