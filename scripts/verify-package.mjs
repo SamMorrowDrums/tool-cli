@@ -47,6 +47,8 @@ function verifyPackage() {
     "dist/index.js",
     "dist/server-entry.d.ts",
     "dist/server-entry.js",
+    "dist/unix-socket.d.ts",
+    "dist/unix-socket.js",
     "package.json",
   ];
   const missingFiles = requiredFiles.filter((path) => !files.includes(path));

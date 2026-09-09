@@ -1,6 +1,11 @@
 import http from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
-import { PORT_ENV_VAR, TOKEN_ENV_VAR } from "./constants.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  HOST_ENV_VAR,
+  PORT_ENV_VAR,
+  SOCKET_ENV_VAR,
+  TOKEN_ENV_VAR,
+} from "./constants.js";
 import type {
   CallToolResult,
   ProviderRequestContext,
@@ -9,6 +14,7 @@ import type {
 } from "./provider.js";
 import {
   BridgeCompatibilityError,
+  RpcAmbiguousEndpointError,
   RpcAbortError,
   RpcHttpError,
   RpcNonJsonResponseError,
@@ -17,19 +23,61 @@ import {
   assertCompatibleBridge,
   rpcCall,
 } from "./rpc-client.js";
+import { RpcAmbiguousEndpointError as ClientEntryAmbiguousEndpointError } from "./client-entry.js";
+import { RpcAmbiguousEndpointError as RootAmbiguousEndpointError } from "./index.js";
 import { ToolCliServer } from "./server.js";
 
 const activeServers: http.Server[] = [];
+const previousHost = process.env[HOST_ENV_VAR];
 const previousPort = process.env[PORT_ENV_VAR];
+const previousSocket = process.env[SOCKET_ENV_VAR];
 const previousToken = process.env[TOKEN_ENV_VAR];
+
+beforeEach(() => {
+  delete process.env[HOST_ENV_VAR];
+  delete process.env[PORT_ENV_VAR];
+  delete process.env[SOCKET_ENV_VAR];
+  delete process.env[TOKEN_ENV_VAR];
+});
 
 afterEach(async () => {
   for (const server of activeServers.splice(0)) {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
+  restoreEnv(HOST_ENV_VAR, previousHost);
   restoreEnv(PORT_ENV_VAR, previousPort);
+  restoreEnv(SOCKET_ENV_VAR, previousSocket);
   restoreEnv(TOKEN_ENV_VAR, previousToken);
+});
+
+describe("RPC endpoint selection", () => {
+  it("exports the typed ambiguity error from public client entry points", () => {
+    expect(ClientEntryAmbiguousEndpointError).toBe(RpcAmbiguousEndpointError);
+    expect(RootAmbiguousEndpointError).toBe(RpcAmbiguousEndpointError);
+  });
+
+  it.each([
+    [HOST_ENV_VAR, "127.0.0.1"],
+    [PORT_ENV_VAR, "7179"],
+  ])(
+    "rejects TOOL_CLI_SOCKET combined with explicit %s",
+    async (variable, value) => {
+      delete process.env[HOST_ENV_VAR];
+      delete process.env[PORT_ENV_VAR];
+      process.env[SOCKET_ENV_VAR] = "/run/parent-session/tool-cli.sock";
+      process.env[variable] = value;
+
+      await expect(rpcCall("getBridgeInfo")).rejects.toSatisfy(
+        (error: unknown) =>
+          error instanceof RpcAmbiguousEndpointError &&
+          error.code === "EAMBIGUOUS" &&
+          error.socketPath === "/run/parent-session/tool-cli.sock" &&
+          error.conflictingVariables.length === 1 &&
+          error.conflictingVariables[0] === variable,
+      );
+    },
+  );
 });
 
 describe("rpcCall typed failures", () => {

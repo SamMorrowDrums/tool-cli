@@ -58,6 +58,7 @@
     "check": "tsc --noEmit",
     "pretest": "npm run clean && npm run build",
     "test": "vitest --run",
+    "test:uds:docker": "npm run build && node scripts/uds-docker-smoke.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

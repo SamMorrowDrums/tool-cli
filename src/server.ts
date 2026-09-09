@@ -20,7 +20,16 @@ import {
   SERVER_IMPLEMENTATION_NAME,
   SERVER_IMPLEMENTATION_VERSION,
   type BridgeInfo,
+  type BridgeTransport,
 } from "./protocol.js";
+import {
+  bindUnixSocket,
+  cleanupUnixSocketBacking,
+  registerUnixSocketCleanup,
+  unregisterUnixSocketCleanup,
+  unpublishUnixSocket,
+  type UnixSocketBinding,
+} from "./unix-socket.js";
 
 const MAX_BODY_SIZE = 1024 * 1024;
 const ajvOptions = {
@@ -68,6 +77,8 @@ export interface ToolDetails {
 export interface StartResult {
   port: number;
   token: string;
+  transport?: BridgeTransport;
+  socketPath?: string | undefined;
 }
 
 /**
@@ -76,23 +87,67 @@ export interface StartResult {
  * Takes a `ToolProvider` — any implementation that can list servers,
  * list tools, describe tools, and call tools.
  *
- * On `start()`, picks a random available port and generates a session
- * token. Both are returned so the caller can set `TOOL_CLI_PORT` and
- * `TOOL_CLI_TOKEN` as environment variables for agent subprocesses.
+ * `start()` generates a session token and picks a random TCP port.
+ * `startUnixSocket()` uses the same protocol on an explicit Unix socket path.
  */
 export class ToolCliServer {
   private server: http.Server | null = null;
   private token: string = "";
+  private transport: BridgeTransport = "tcp";
+  private socketBinding: UnixSocketBinding | null = null;
+  private startResult: StartResult | null = null;
+  private startPromise: Promise<StartResult> | null = null;
+  private stopPromise: Promise<void> | null = null;
 
   constructor(private provider: ToolProvider) {}
 
-  /** Start the HTTP server on a random port. Returns `{ port, token }`. */
+  /** Start on a random TCP port, preserving the original public signature. */
   async start(log?: (msg: string) => void): Promise<StartResult> {
-    if (this.server) {
-      return { port: this.getPort(), token: this.token };
+    return this.startTransport(undefined, log);
+  }
+
+  /** Start on an explicitly supplied Unix-domain-socket path. */
+  async startUnixSocket(
+    socketPath: string,
+    log?: (msg: string) => void,
+  ): Promise<StartResult> {
+    if (typeof socketPath !== "string") {
+      throw new TypeError("socketPath must be a string");
+    }
+    return this.startTransport(socketPath, log);
+  }
+
+  private async startTransport(
+    socketPath: string | undefined,
+    log?: (msg: string) => void,
+  ): Promise<StartResult> {
+    if (this.startPromise) {
+      return cloneStartResult(await this.startPromise);
+    }
+    if (this.stopPromise) await this.stopPromise;
+    if (this.startPromise) {
+      return cloneStartResult(await this.startPromise);
+    }
+    if (this.server && this.startResult) {
+      return cloneStartResult(this.startResult);
     }
 
+    const pending = this.startInternal(socketPath, log);
+    this.startPromise = pending;
+    try {
+      return cloneStartResult(await pending);
+    } finally {
+      if (this.startPromise === pending) this.startPromise = null;
+    }
+  }
+
+  private async startInternal(
+    socketPath: string | undefined,
+    log?: (msg: string) => void,
+  ): Promise<StartResult> {
     this.token = generateToken();
+    const useUnixSocket = socketPath !== undefined;
+    this.transport = useUnixSocket ? "unix" : "tcp";
 
     const server = http.createServer((req, res) => {
       if (req.method !== "POST") {
@@ -159,30 +214,123 @@ export class ToolCliServer {
       });
     });
 
-    return new Promise<StartResult>((resolve, reject) => {
-      server.once("error", (err) => {
-        this.server = null;
-        reject(err);
-      });
-      const bindHost = resolveBindHost();
-      server.listen(0, bindHost, () => {
+    let boundSocket: UnixSocketBinding | null = null;
+    try {
+      if (useUnixSocket) {
+        const binding = await bindUnixSocket(server, socketPath);
+        boundSocket = binding;
         this.server = server;
-        const port = this.getPort();
-        log?.(`[tool-cli] RPC server listening on ${bindHost}:${port}`);
-        resolve({ port, token: this.token });
-      });
-    });
+        this.socketBinding = binding;
+        registerUnixSocketCleanup(binding);
+        this.startResult = {
+          port: 0,
+          token: this.token,
+          transport: "unix",
+          socketPath: binding.socketPath,
+        };
+        log?.(
+          `[tool-cli] RPC server listening on Unix socket ${binding.socketPath}`,
+        );
+        return this.startResult;
+      }
+
+      const bindHost = resolveBindHost();
+      await listenTcp(server, bindHost);
+      this.server = server;
+      const port = this.getPort();
+      this.startResult = {
+        port,
+        token: this.token,
+        transport: "tcp",
+      };
+      log?.(`[tool-cli] RPC server listening on ${bindHost}:${port}`);
+      return this.startResult;
+    } catch (error) {
+      if (boundSocket) {
+        try {
+          await unpublishUnixSocket(boundSocket);
+        } catch {
+          // Preserve the original startup failure.
+        }
+      }
+      try {
+        await closeHttpServer(server);
+      } catch {
+        // Preserve the original startup failure.
+      }
+      if (boundSocket) {
+        try {
+          await cleanupUnixSocketBacking(boundSocket);
+        } catch {
+          // Preserve the original startup failure.
+        }
+        unregisterUnixSocketCleanup(boundSocket);
+      }
+      this.server = null;
+      this.socketBinding = null;
+      this.startResult = null;
+      this.token = "";
+      this.transport = "tcp";
+      throw error;
+    }
   }
 
   /** Stop the HTTP server. */
   async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
+    const pending = this.stopInternal();
+    this.stopPromise = pending;
+    try {
+      await pending;
+    } finally {
+      if (this.stopPromise === pending) this.stopPromise = null;
+    }
+  }
+
+  private async stopInternal(): Promise<void> {
+    if (this.startPromise) {
+      try {
+        await this.startPromise;
+      } catch {
+        return;
+      }
+    }
+
     const server = this.server;
     if (!server) return;
+    const binding = this.socketBinding;
     this.server = null;
+    this.socketBinding = null;
+    this.startResult = null;
 
-    return new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
+    let cleanupError: unknown;
+    if (binding) {
+      try {
+        await unpublishUnixSocket(binding);
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
+
+    let closeError: unknown;
+    try {
+      await closeHttpServer(server);
+    } catch (error) {
+      closeError = error;
+    } finally {
+      this.token = "";
+      this.transport = "tcp";
+    }
+    if (binding && !closeError) {
+      try {
+        await cleanupUnixSocketBacking(binding);
+      } catch (error) {
+        cleanupError ??= error;
+      }
+    }
+    if (binding) unregisterUnixSocketCleanup(binding);
+    if (closeError) throw closeError;
+    if (cleanupError) throw cleanupError;
   }
 
   /** Returns the port the server is listening on. */
@@ -192,6 +340,16 @@ export class ToolCliServer {
       if (addr && typeof addr === "object") return addr.port;
     }
     return 0;
+  }
+
+  /** Returns the public Unix socket path, or undefined in TCP mode. */
+  getSocketPath(): string | undefined {
+    return this.socketBinding?.socketPath;
+  }
+
+  /** Returns the active bridge transport. */
+  getTransport(): BridgeTransport {
+    return this.transport;
   }
 
   private async handleBody(
@@ -302,6 +460,10 @@ export class ToolCliServer {
         },
         cancellation: {
           providerAbortSignal: true,
+        },
+        transport: {
+          type: this.transport,
+          networkListener: this.transport === "tcp",
         },
       },
       ...(upstreamMcp ? { upstreamMcp } : {}),
@@ -504,6 +666,36 @@ export class ToolCliServer {
       );
     }
   }
+}
+
+async function listenTcp(server: http.Server, host: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error) => {
+      server.removeListener("listening", onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      server.removeListener("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(0, host);
+  });
+}
+
+async function closeHttpServer(server: http.Server): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) reject(error);
+      else resolve();
+    });
+  });
+}
+
+function cloneStartResult(result: StartResult): StartResult {
+  return { ...result };
 }
 
 export class BridgeRpcError extends Error {

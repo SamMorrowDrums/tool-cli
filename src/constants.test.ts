@@ -4,9 +4,11 @@ import {
   DEFAULT_TIMEOUT_MS,
   HOST_ENV_VAR,
   MAX_TIMEOUT_MS,
+  SOCKET_ENV_VAR,
   TIMEOUT_ENV_VAR,
   resolveBindHost,
   resolveHost,
+  resolveSocketPath,
   resolveTimeoutMs,
 } from "./constants.js";
 
@@ -34,6 +36,24 @@ describe("resolveBindHost", () => {
 describe("resolveHost", () => {
   afterEach(() => {
     delete process.env[HOST_ENV_VAR];
+  });
+
+  describe("resolveSocketPath", () => {
+    afterEach(() => {
+      delete process.env[SOCKET_ENV_VAR];
+    });
+
+    it("returns undefined when unset or empty", () => {
+      delete process.env[SOCKET_ENV_VAR];
+      expect(resolveSocketPath()).toBeUndefined();
+      process.env[SOCKET_ENV_VAR] = "";
+      expect(resolveSocketPath()).toBeUndefined();
+    });
+
+    it("returns the configured Unix socket path", () => {
+      process.env[SOCKET_ENV_VAR] = "/run/user/1000/tool-cli/bridge.sock";
+      expect(resolveSocketPath()).toBe("/run/user/1000/tool-cli/bridge.sock");
+    });
   });
 
   describe("resolveTimeoutMs", () => {

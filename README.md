@@ -136,6 +136,11 @@ credentials: it requires the full operation list, authentication, discovery,
 calls, input validation, all resource operations, provider cancellation,
 implementation identity, and upstream MCP diagnostics.
 
+The bridge also supports an opt-in Unix-domain-socket transport for embeddings
+that place the CLI in a network-isolated container. The audited
+`mcpi-ext@1.0.0` integration above uses the backward-compatible TCP mode; an
+embedding must explicitly supply a socket path to enable UDS mode.
+
 ### Shell composition
 
 Because the host bash tool owns process execution, normal shell composition
@@ -183,6 +188,7 @@ exits zero; complete failure exits nonzero.
 
 The client library exposes typed failures:
 
+- `RpcAmbiguousEndpointError`
 - `RpcHttpError`
 - `RpcProtocolError`
 - `RpcNonJsonResponseError`
@@ -191,6 +197,14 @@ The client library exposes typed failures:
 - `RpcTimeoutError`
 - `RpcAbortError`
 - `BridgeCompatibilityError`
+
+`RpcAmbiguousEndpointError` is a specialized `RpcTransportError` raised before
+any request when a non-empty `TOOL_CLI_SOCKET` appears with a non-empty
+`TOOL_CLI_HOST` or `TOOL_CLI_PORT`. It reports the socket path and conflicting
+environment-variable names, never the bearer token. Other `RpcTransportError`
+instances identify the selected `transport`, safe endpoint description, and
+underlying error `code`. Missing, refused, and inaccessible socket diagnostics
+name the socket path without printing the bearer token.
 
 ### Timeouts and cancellation
 
@@ -256,9 +270,12 @@ three resource methods before it advertises tool-cli as available.
 
 ## Security boundary
 
-`ToolCliServer.start()` binds to a random port and generates a random 32-byte
-session token. Every request, including `getBridgeInfo`, must carry that token
-as an HTTP bearer credential.
+`ToolCliServer.start()` generates a random 32-byte session token. By default it
+preserves the existing behavior and binds HTTP to a random TCP loopback port.
+Calling `startUnixSocket(socketPath)` instead serves the same authenticated
+HTTP/JSON-RPC protocol over an explicitly selected Unix-domain socket and
+creates no TCP listener. Every request, including `getBridgeInfo`, must carry
+the token as an HTTP bearer credential.
 
 Bearer authentication answers only "does this process possess the session
 capability?" It is not tool authorization. A process that obtains the token can
@@ -278,11 +295,119 @@ The bridge is trusted-local IPC, not a remote service:
   protection, or multi-tenant authorization.
 - Any process that can read the session's environment can use the bearer token
   for its lifetime. Do not log, persist, commit, copy, or forward it.
+- Unix socket mode requires possession of **both** the mounted session socket
+  and its bearer token. The socket is session-scoped and is not sufficient by
+  itself.
 - Keep the server on loopback unless an equivalent container or VM network
   boundary is in place.
 - `mcpi-ext@1.0.0` pins bridge verification to loopback, masks inherited
   `TOOL_CLI_*` credentials until verification succeeds, and strips all
   `TOOL_CLI_*` variables from stdio MCP child environments.
+
+### Unix socket mode for container egress sandboxes
+
+Use a dedicated absolute path whose immediate parent belongs only to the
+session:
+
+```typescript
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ToolCliServer } from "@sammorrowdrums/tool-cli/server";
+
+const sessionDirectory = await mkdtemp(join(tmpdir(), "tool-cli-session-"));
+const socketPath = join(sessionDirectory, "bridge.sock");
+const server = new ToolCliServer(provider);
+const { token } = await server.startUnixSocket(socketPath);
+```
+
+The server creates a missing parent with mode `0700`; an existing parent must
+already be owned by the current user with mode `0700`. It refuses relative or
+non-normalized paths, unsafe foreign-owned or writable ancestors, a symlink at
+the final socket entry, non-socket entries, foreign sockets, and active sockets.
+Existing ancestor aliases are resolved to their canonical path before any
+directory is created, so system aliases such as macOS `/var` cannot redirect a
+later cleanup. Use the returned canonical `socketPath` for clients and mounts.
+Only an owned, verified stale socket is removed. The published socket is mode
+`0600`, is removed by `stop()` and normal termination signals, and is never
+blindly unlinked during close.
+
+The ownership and write-permission checks apply to **every ancestor**, not only
+the immediate `0700` parent. For example, `/tmp/tool-cli/session` is still
+refused when `/tmp/tool-cli` is mode `0775`, even if `session` is mode `0700`.
+Creating the dedicated session directory directly with `mkdtemp()` under the
+OS sticky temp directory is the reliable pattern used in the example above.
+
+While the server is running, the dedicated directory also contains a private
+mode-`0600` hard link named `.tc-*`. It reserves Node's internal close-time
+pathname so another session cannot occupy it; clients and container mounts must
+use the explicitly returned public `socketPath`, never the private link.
+
+Signal cleanup preserves host signal semantics. If the embedding process
+already handles a signal such as `SIGHUP` (including a one-shot handler),
+tool-cli leaves the live socket in place and the host remains responsible for
+calling `stop()` during its own shutdown path. The process-exit hook remains a
+final cleanup guard.
+
+Mount the dedicated directory into the container, use the path as seen inside
+the container, and preserve ownership mapping so the `0700` directory and
+`0600` socket remain usable. On a rootful Docker daemon without user namespace
+remapping, run the container with the same numeric UID:
+
+```sh
+docker run --rm --network none \
+  --cap-drop ALL \
+  --security-opt no-new-privileges \
+  --user "$(id -u):$(id -g)" \
+  --mount type=bind,src="$sessionDirectory",dst=/run/tool-cli,readonly \
+  --env TOOL_CLI_SOCKET=/run/tool-cli/bridge.sock \
+  --env TOOL_CLI_TOKEN \
+  your-agent-image
+```
+
+With rootless Docker, container UID `0` maps to the invoking host user, so use
+`--user 0:0` (or omit `--user`) instead of copying the host UID numerically.
+Daemons configured with `userns-remap` need an explicit mapping that grants the
+container process access to the host-owned session directory; fail closed if
+that mapping is not known.
+
+On a rootful daemon, do **not** run the sandbox as container root. Root's
+`DAC_OVERRIDE` capability bypasses the `0700` directory and `0600` socket modes,
+so those modes provide no cross-session isolation to a root process that can
+see multiple session paths. Use the mapped non-root session UID, mount only its
+dedicated socket directory, drop all capabilities, and enable
+`no-new-privileges` as shown above. Rootless container UID `0` is different: it
+maps to the invoking unprivileged host user rather than host root.
+
+The launcher supplies `TOOL_CLI_TOKEN` through the child environment; the
+token value must never appear in command arguments, logs, or process titles.
+Before injecting the current session values, strip inherited bridge variables
+so stale TCP or UDS credentials cannot leak into the sandbox:
+
+```typescript
+const childEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([name]) => !name.startsWith("TOOL_CLI_")),
+);
+childEnv.TOOL_CLI_SOCKET = "/run/tool-cli/bridge.sock";
+childEnv.TOOL_CLI_TOKEN = token;
+```
+
+`TOOL_CLI_SOCKET` is mutually exclusive with explicit TCP selectors. If it is
+non-empty while `TOOL_CLI_HOST` or `TOOL_CLI_PORT` is also non-empty, the client
+fails before authentication or any network/socket request instead of guessing
+which bridge owns the token. Unset the TCP variables, or set them to empty
+strings when temporarily masking inherited values, before selecting UDS.
+Internal TCP defaults are used only when no socket is selected and do not count
+as explicit selectors. The socket pathname may differ between host and
+container because the client uses the mounted pathname from its own filesystem
+namespace.
+
+Maintainers with a local `node:22` container image can run the unprivileged,
+network-disabled mount smoke test with `npm run test:uds:docker`. The script
+matches exact Docker security-option names, detects rootless Docker, rejects
+unsupported `userns-remap`, and fails closed on unrecognized output. It uses
+`--pull never` and does not publish anything. Override the preloaded image through
+`TOOL_CLI_DOCKER_IMAGE` when needed.
 
 Advanced cross-network-namespace deployments can override the two hosts:
 
@@ -298,7 +423,8 @@ lifetime.
 ## Architecture
 
 The CLI does not connect directly to MCP servers. It speaks authenticated
-JSON-RPC 2.0 over HTTP to a bridge embedded in the agent harness.
+JSON-RPC 2.0 over HTTP, carried by TCP loopback or a Unix socket, to a bridge
+embedded in the agent harness.
 
 ```mermaid
 flowchart LR
@@ -365,6 +491,21 @@ The caller must place `port` and `token` in the intended child process
 environment as `TOOL_CLI_PORT` and `TOOL_CLI_TOKEN`. Do not copy them into the
 parent process environment unless the parent itself is the intended client.
 
+For a Unix socket, opt in explicitly:
+
+```typescript
+const { socketPath, token } = await server.startUnixSocket(
+  "/run/user/1000/tool-cli/session-123/bridge.sock",
+);
+```
+
+Place the client-visible path in `TOOL_CLI_SOCKET` and the token in
+`TOOL_CLI_TOKEN`; clear `TOOL_CLI_HOST` and `TOOL_CLI_PORT`. Supplying either
+TCP selector together with the socket is rejected as ambiguous before a request
+is sent. The returned `StartResult` reports `transport: "tcp" | "unix"`, keeps
+`port` for backward compatibility (`0` in UDS mode), and includes `socketPath`
+in UDS mode.
+
 `ToolProvider` has three required methods:
 
 ```typescript
@@ -414,22 +555,32 @@ The current operation surface is:
 | `listResourceTemplates` | `{ server }`                  | Complete resource template list                    |
 | `readResource`          | `{ server, uri }`             | Complete resource contents                         |
 
-Every request is JSON-RPC 2.0 over authenticated HTTP. A bridge-v1 handshake
-from this release identifies itself as:
+Every request is JSON-RPC 2.0 over authenticated HTTP. A bridge-v1.1 TCP
+handshake identifies itself as:
 
 ```json
 {
   "bridgeProtocol": {
     "name": "tool-cli-bridge",
     "major": 1,
-    "version": "1.0"
+    "version": "1.1"
   },
   "serverImplementation": {
     "name": "@sammorrowdrums/tool-cli",
     "version": "1.0.3"
+  },
+  "capabilities": {
+    "transport": {
+      "type": "tcp",
+      "networkListener": true
+    }
   }
 }
 ```
+
+UDS mode reports `"type": "unix"` and `"networkListener": false`. The transport
+metadata is additive within bridge major `1`; existing clients that validate
+only the protocol name and major continue to interoperate.
 
 Protocol-major changes are breaking. A `1.x` client rejects a bridge with a
 different major and does not fall back to a pre-handshake protocol. Additive

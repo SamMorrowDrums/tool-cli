@@ -9,6 +9,9 @@ export const PORT_ENV_VAR = "TOOL_CLI_PORT";
 /** Environment variable for the shared auth token. */
 export const TOKEN_ENV_VAR = "TOOL_CLI_TOKEN";
 
+/** Environment variable for the client Unix-domain-socket path. */
+export const SOCKET_ENV_VAR = "TOOL_CLI_SOCKET";
+
 /** Default finite timeout for bridge requests. */
 export const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -40,6 +43,11 @@ export function resolvePort(): number {
 /** Resolve the token from environment, or undefined if not set. */
 export function resolveToken(): string | undefined {
   return process.env[TOKEN_ENV_VAR] || undefined;
+}
+
+/** Resolve the configured client Unix socket path, or undefined for TCP. */
+export function resolveSocketPath(): string | undefined {
+  return process.env[SOCKET_ENV_VAR] || undefined;
 }
 
 /** Resolve and bound the bridge request timeout. */

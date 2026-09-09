@@ -1,6 +1,12 @@
+import http from "node:http";
+import { isAbsolute } from "node:path";
 import {
+  HOST_ENV_VAR,
+  PORT_ENV_VAR,
+  SOCKET_ENV_VAR,
   resolveHost,
   resolvePort,
+  resolveSocketPath,
   resolveTimeoutMs,
   resolveToken,
 } from "./constants.js";
@@ -8,6 +14,7 @@ import {
   BRIDGE_PROTOCOL_MAJOR,
   BRIDGE_PROTOCOL_NAME,
   type BridgeInfo,
+  type BridgeTransport,
 } from "./protocol.js";
 
 interface JsonRpcResponse {
@@ -87,9 +94,40 @@ export class RpcInvalidResponseError extends Error {
 }
 
 export class RpcTransportError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly transport?: BridgeTransport;
+  readonly endpoint?: string;
+  readonly code?: string;
+
+  constructor(
+    message: string,
+    options?: ErrorOptions & {
+      transport?: BridgeTransport;
+      endpoint?: string;
+      code?: string;
+    },
+  ) {
     super(message, options);
     this.name = "RpcTransportError";
+    this.transport = options?.transport;
+    this.endpoint = options?.endpoint;
+    this.code = options?.code;
+  }
+}
+
+export class RpcAmbiguousEndpointError extends RpcTransportError {
+  readonly socketPath: string;
+  readonly conflictingVariables: readonly string[];
+
+  constructor(socketPath: string, conflictingVariables: readonly string[]) {
+    const variables = [...conflictingVariables];
+    const variableList = variables.join(" and ");
+    super(
+      `Ambiguous bridge endpoint: ${SOCKET_ENV_VAR} cannot be combined with ${variableList}. Unset ${variableList} when using a Unix socket.`,
+      { code: "EAMBIGUOUS" },
+    );
+    this.name = "RpcAmbiguousEndpointError";
+    this.socketPath = socketPath;
+    this.conflictingVariables = Object.freeze(variables);
   }
 }
 
@@ -125,6 +163,17 @@ export class BridgeCompatibilityError extends Error {
 
 let requestId = 0;
 
+type RpcEndpoint =
+  | { transport: "tcp"; host: string; port: number; display: string }
+  | { transport: "unix"; socketPath: string; display: string };
+
+interface HttpResponseData {
+  status: number;
+  statusText: string;
+  body: string;
+  contentType: string | null;
+}
+
 /**
  * Send an authenticated JSON-RPC 2.0 request to the tool-cli bridge.
  *
@@ -141,6 +190,7 @@ export async function rpcCall(
   const timeoutMs = resolveTimeoutMs(options.timeoutMs);
   const controller = new AbortController();
   let timedOut = false;
+  let endpoint: RpcEndpoint | undefined;
 
   const timeout = setTimeout(() => {
     timedOut = true;
@@ -156,40 +206,39 @@ export async function rpcCall(
   options.signal?.addEventListener("abort", abortFromCaller, { once: true });
 
   try {
-    const response = await fetch(`http://${resolveHost()}:${resolvePort()}`, {
-      method: "POST",
-      headers: buildHeaders(),
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        method,
-        params,
-        id,
-      }),
-      signal: controller.signal,
+    endpoint = resolveRpcEndpoint();
+    const payload = JSON.stringify({
+      jsonrpc: "2.0",
+      method,
+      params,
+      id,
     });
-    const body = await response.text();
-    const contentType = response.headers.get("content-type");
-    const parsed = tryParseJson(body);
+    const response = await sendRequest(endpoint, payload, controller.signal);
+    const parsed = tryParseJson(response.body);
 
-    if (!response.ok) {
+    if (response.status < 200 || response.status >= 300) {
       throw new RpcHttpError(
         response.status,
         response.statusText,
-        body,
-        contentType,
+        response.body,
+        response.contentType,
         parsed,
       );
     }
 
     if (parsed === undefined) {
-      throw new RpcNonJsonResponseError(response.status, body, contentType);
+      throw new RpcNonJsonResponseError(
+        response.status,
+        response.body,
+        response.contentType,
+      );
     }
 
     if (!isJsonRpcResponse(parsed)) {
       throw new RpcInvalidResponseError(
         "Bridge returned an invalid JSON-RPC response",
         response.status,
-        body,
+        response.body,
         parsed,
       );
     }
@@ -198,7 +247,7 @@ export async function rpcCall(
       throw new RpcInvalidResponseError(
         `Bridge returned JSON-RPC id ${JSON.stringify(parsed.id)} for request ${id}`,
         response.status,
-        body,
+        response.body,
         parsed,
       );
     }
@@ -217,7 +266,7 @@ export async function rpcCall(
       throw new RpcInvalidResponseError(
         "Bridge JSON-RPC response has neither result nor error",
         response.status,
-        body,
+        response.body,
         parsed,
       );
     }
@@ -228,7 +277,8 @@ export async function rpcCall(
       err instanceof RpcHttpError ||
       err instanceof RpcProtocolError ||
       err instanceof RpcNonJsonResponseError ||
-      err instanceof RpcInvalidResponseError
+      err instanceof RpcInvalidResponseError ||
+      err instanceof RpcTransportError
     ) {
       throw err;
     }
@@ -238,14 +288,163 @@ export async function rpcCall(
     if (options.signal?.aborted) {
       throw new RpcAbortError(options.signal.reason, { cause: err });
     }
-    throw new RpcTransportError(
-      err instanceof Error ? err.message : String(err),
-      { cause: err },
-    );
+    throw createTransportError(endpoint, err);
   } finally {
     clearTimeout(timeout);
     options.signal?.removeEventListener("abort", abortFromCaller);
   }
+}
+
+function resolveRpcEndpoint(): RpcEndpoint {
+  const socketPath = resolveSocketPath();
+  if (socketPath) {
+    const conflictingVariables = [HOST_ENV_VAR, PORT_ENV_VAR].filter((name) =>
+      Boolean(process.env[name]),
+    );
+    if (conflictingVariables.length > 0) {
+      throw new RpcAmbiguousEndpointError(socketPath, conflictingVariables);
+    }
+    if (process.platform === "win32") {
+      throw new RpcTransportError(
+        "TOOL_CLI_SOCKET is only supported on Unix-like platforms",
+        {
+          transport: "unix",
+          endpoint: socketPath,
+          code: "ENOTSUP",
+        },
+      );
+    }
+    if (!isAbsolute(socketPath)) {
+      throw new RpcTransportError(
+        `TOOL_CLI_SOCKET must be an absolute path: ${socketPath}`,
+        {
+          transport: "unix",
+          endpoint: socketPath,
+          code: "EINVAL",
+        },
+      );
+    }
+    return { transport: "unix", socketPath, display: socketPath };
+  }
+
+  const host = resolveHost();
+  const port = resolvePort();
+  return {
+    transport: "tcp",
+    host,
+    port,
+    display: `http://${host}:${port}`,
+  };
+}
+
+async function sendRequest(
+  endpoint: RpcEndpoint,
+  body: string,
+  signal: AbortSignal,
+): Promise<HttpResponseData> {
+  if (endpoint.transport === "unix") {
+    return sendUnixRequest(endpoint.socketPath, body, signal);
+  }
+
+  const response = await fetch(endpoint.display, {
+    method: "POST",
+    headers: buildHeaders(),
+    body,
+    signal,
+  });
+  return {
+    status: response.status,
+    statusText: response.statusText,
+    body: await response.text(),
+    contentType: response.headers.get("content-type"),
+  };
+}
+
+async function sendUnixRequest(
+  socketPath: string,
+  body: string,
+  signal: AbortSignal,
+): Promise<HttpResponseData> {
+  return new Promise<HttpResponseData>((resolve, reject) => {
+    const request = http.request(
+      {
+        socketPath,
+        path: "/",
+        method: "POST",
+        headers: {
+          ...buildHeaders(),
+          "Content-Length": String(Buffer.byteLength(body)),
+        },
+        signal,
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on("data", (chunk: Buffer | string) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        response.once("error", reject);
+        response.once("end", () => {
+          const contentType = response.headers["content-type"];
+          resolve({
+            status: response.statusCode ?? 0,
+            statusText: response.statusMessage ?? "",
+            body: Buffer.concat(chunks).toString("utf8"),
+            contentType: Array.isArray(contentType)
+              ? (contentType[0] ?? null)
+              : (contentType ?? null),
+          });
+        });
+      },
+    );
+    request.once("error", reject);
+    request.end(body);
+  });
+}
+
+function createTransportError(
+  endpoint: RpcEndpoint | undefined,
+  error: unknown,
+): RpcTransportError {
+  const code = getNestedErrorCode(error);
+  const cause = error instanceof Error ? error : undefined;
+  if (endpoint?.transport === "unix") {
+    const message =
+      code === "ENOENT"
+        ? `Unix socket not found: ${endpoint.socketPath}`
+        : code === "ECONNREFUSED"
+          ? `Unix socket is not accepting connections: ${endpoint.socketPath}`
+          : code === "EACCES"
+            ? `Permission denied connecting to Unix socket: ${endpoint.socketPath}`
+            : `Unix socket request failed at ${endpoint.socketPath}: ${
+                error instanceof Error ? error.message : String(error)
+              }`;
+    return new RpcTransportError(message, {
+      cause,
+      transport: "unix",
+      endpoint: endpoint.socketPath,
+      code,
+    });
+  }
+
+  return new RpcTransportError(
+    error instanceof Error ? error.message : String(error),
+    {
+      cause,
+      transport: "tcp",
+      endpoint: endpoint?.display,
+      code,
+    },
+  );
+}
+
+function getNestedErrorCode(error: unknown): string | undefined {
+  let current = error;
+  while (current instanceof Error) {
+    const code = (current as NodeJS.ErrnoException).code;
+    if (code) return code;
+    current = current.cause;
+  }
+  return undefined;
 }
 
 /** Perform the authenticated protocol handshake and reject incompatible bridges. */
