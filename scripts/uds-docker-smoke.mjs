@@ -6,6 +6,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { ToolCliServer } from "../dist/server-entry.js";
+import { classifyDockerOwnershipModel } from "./docker-ownership-model.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -24,21 +25,35 @@ const server = new ToolCliServer(provider);
 
 try {
   await execFileAsync("docker", ["image", "inspect", image]);
-  const { stdout: securityOptions } = await execFileAsync(
-    "docker",
-    ["info", "--format", "{{json .SecurityOptions}}"],
-    { encoding: "utf8" },
-  );
-  const rootless = securityOptions.includes("rootless");
-  const remappedUserNamespace = !rootless && securityOptions.includes("userns");
-  if (remappedUserNamespace) {
+  let securityOptions;
+  try {
+    ({ stdout: securityOptions } = await execFileAsync(
+      "docker",
+      ["info", "--format", "{{json .SecurityOptions}}"],
+      { encoding: "utf8" },
+    ));
+  } catch (error) {
+    throw new Error(
+      "Could not determine Docker's ownership model; refusing to select a container user",
+      { cause: error },
+    );
+  }
+
+  const ownershipModel = classifyDockerOwnershipModel(securityOptions);
+  if (ownershipModel === "unknown") {
+    throw new Error(
+      "Docker returned unrecognized security options; refusing to select a container user",
+    );
+  }
+  if (ownershipModel === "userns-remap") {
     throw new Error(
       "Docker userns-remap requires an explicit host/container UID mapping for the 0700 socket directory",
     );
   }
-  const containerUser = rootless
-    ? "0:0"
-    : `${process.getuid()}:${process.getgid()}`;
+  const containerUser =
+    ownershipModel === "rootless"
+      ? "0:0"
+      : `${process.getuid()}:${process.getgid()}`;
 
   const { token } = await server.startUnixSocket(socketPath);
   const dockerEnv = { ...process.env };

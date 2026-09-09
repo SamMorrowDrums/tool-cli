@@ -395,9 +395,10 @@ its own filesystem namespace.
 
 Maintainers with a local `node:22` container image can run the unprivileged,
 network-disabled mount smoke test with `npm run test:uds:docker`. The script
-detects rootless Docker, rejects unsupported `userns-remap` automatically,
-uses `--pull never`, and does not publish anything. Override the preloaded image
-through `TOOL_CLI_DOCKER_IMAGE` when needed.
+matches exact Docker security-option names, detects rootless Docker, rejects
+unsupported `userns-remap`, and fails closed on unrecognized output. It uses
+`--pull never` and does not publish anything. Override the preloaded image through
+`TOOL_CLI_DOCKER_IMAGE` when needed.
 
 Advanced cross-network-namespace deployments can override the two hosts:
 

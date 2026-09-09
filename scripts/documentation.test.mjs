@@ -50,6 +50,7 @@ describe("published documentation", () => {
     expect(readme).toContain("apply to **every ancestor**");
     expect(readme).toContain("/tmp/tool-cli");
     expect(readme).toContain("mkdtemp()");
+    expect(readme).toContain("fails closed on unrecognized output");
     expect(changelog).toContain("1.1.0");
     expect(packageJson.version).toBe("1.0.3");
   });
