@@ -2,7 +2,12 @@ import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PORT_ENV_VAR, TOKEN_ENV_VAR } from "./constants.js";
+import {
+  HOST_ENV_VAR,
+  PORT_ENV_VAR,
+  SOCKET_ENV_VAR,
+  TOKEN_ENV_VAR,
+} from "./constants.js";
 import type { CallToolResult, ToolInfo, ToolProvider } from "./provider.js";
 import { SERVER_IMPLEMENTATION_VERSION } from "./protocol.js";
 import { ToolCliServer } from "./server.js";
@@ -134,7 +139,9 @@ function runCli(
 
 describe("global CLI metadata", () => {
   const disconnectedEnv = { ...process.env };
+  delete disconnectedEnv[HOST_ENV_VAR];
   delete disconnectedEnv[PORT_ENV_VAR];
+  delete disconnectedEnv[SOCKET_ENV_VAR];
   delete disconnectedEnv[TOKEN_ENV_VAR];
 
   it("--help works without bridge environment or authentication", async () => {
@@ -143,6 +150,10 @@ describe("global CLI metadata", () => {
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("Usage:");
     expect(result.stdout).toContain("--version");
+    expect(result.stdout).toContain("TOOL_CLI_SOCKET");
+    expect(result.stdout).toContain("exclusive with TCP variables");
+    expect(result.stdout).toContain("TOOL_CLI_HOST/TOOL_CLI_PORT");
+    expect(result.stdout).toContain("Required bearer token");
   });
 
   it("--version works without bridge environment or authentication", async () => {
@@ -174,6 +185,8 @@ describe("CLI schema and result fidelity", () => {
       [PORT_ENV_VAR]: String(started.port),
       [TOKEN_ENV_VAR]: started.token,
     };
+    delete env[HOST_ENV_VAR];
+    delete env[SOCKET_ENV_VAR];
   });
 
   afterAll(async () => {
@@ -201,6 +214,20 @@ describe("CLI schema and result fidelity", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("HTTP 401");
     expect(result.stderr).toContain("Unauthorized");
+  });
+
+  it("rejects inherited UDS and explicitly pinned TCP selectors", async () => {
+    const result = await runCli(["--json"], {
+      ...env,
+      [HOST_ENV_VAR]: "127.0.0.1",
+      [SOCKET_ENV_VAR]: "/run/parent-session/tool-cli.sock",
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Ambiguous bridge endpoint");
+    expect(result.stderr).toContain(SOCKET_ENV_VAR);
+    expect(result.stderr).toContain(HOST_ENV_VAR);
+    expect(result.stderr).toContain(PORT_ENV_VAR);
   });
 
   it("summarizes nested, enum, optional, and required input fields for humans", async () => {

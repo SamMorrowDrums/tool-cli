@@ -1,6 +1,9 @@
 import http from "node:http";
 import { isAbsolute } from "node:path";
 import {
+  HOST_ENV_VAR,
+  PORT_ENV_VAR,
+  SOCKET_ENV_VAR,
   resolveHost,
   resolvePort,
   resolveSocketPath,
@@ -108,6 +111,23 @@ export class RpcTransportError extends Error {
     this.transport = options?.transport;
     this.endpoint = options?.endpoint;
     this.code = options?.code;
+  }
+}
+
+export class RpcAmbiguousEndpointError extends RpcTransportError {
+  readonly socketPath: string;
+  readonly conflictingVariables: readonly string[];
+
+  constructor(socketPath: string, conflictingVariables: readonly string[]) {
+    const variables = [...conflictingVariables];
+    const variableList = variables.join(" and ");
+    super(
+      `Ambiguous bridge endpoint: ${SOCKET_ENV_VAR} cannot be combined with ${variableList}. Unset ${variableList} when using a Unix socket.`,
+      { code: "EAMBIGUOUS" },
+    );
+    this.name = "RpcAmbiguousEndpointError";
+    this.socketPath = socketPath;
+    this.conflictingVariables = Object.freeze(variables);
   }
 }
 
@@ -278,6 +298,12 @@ export async function rpcCall(
 function resolveRpcEndpoint(): RpcEndpoint {
   const socketPath = resolveSocketPath();
   if (socketPath) {
+    const conflictingVariables = [HOST_ENV_VAR, PORT_ENV_VAR].filter((name) =>
+      Boolean(process.env[name]),
+    );
+    if (conflictingVariables.length > 0) {
+      throw new RpcAmbiguousEndpointError(socketPath, conflictingVariables);
+    }
     if (process.platform === "win32") {
       throw new RpcTransportError(
         "TOOL_CLI_SOCKET is only supported on Unix-like platforms",

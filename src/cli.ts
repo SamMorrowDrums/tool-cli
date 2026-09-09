@@ -3,6 +3,7 @@
 import { writeFileSync } from "node:fs";
 import {
   BridgeCompatibilityError,
+  RpcAmbiguousEndpointError,
   RpcAbortError,
   RpcHttpError,
   RpcNonJsonResponseError,
@@ -13,7 +14,13 @@ import {
   rpcCall,
   type RpcCallOptions,
 } from "./rpc-client.js";
-import { MAX_TIMEOUT_MS } from "./constants.js";
+import {
+  HOST_ENV_VAR,
+  MAX_TIMEOUT_MS,
+  PORT_ENV_VAR,
+  SOCKET_ENV_VAR,
+  TOKEN_ENV_VAR,
+} from "./constants.js";
 import { SERVER_IMPLEMENTATION_VERSION } from "./protocol.js";
 import { formatSchema } from "./schema-summary.js";
 
@@ -723,6 +730,15 @@ function globalHelp(): void {
     `  --timeout <ms>             Request timeout (1-${MAX_TIMEOUT_MS})`,
   );
   console.log("  --json                     Lossless machine-readable output");
+  console.log("");
+  console.log("Bridge environment:");
+  console.log(
+    `  ${SOCKET_ENV_VAR}           Unix socket path (exclusive with TCP variables)`,
+  );
+  console.log(
+    `  ${HOST_ENV_VAR}/${PORT_ENV_VAR}  TCP endpoint (unset when using a Unix socket)`,
+  );
+  console.log(`  ${TOKEN_ENV_VAR}            Required bearer token`);
 }
 
 function requireFlagValue(args: string[], index: number, flag: string): string {
@@ -774,6 +790,7 @@ function formatCliError(err: unknown): string {
     return `JSON-RPC ${err.code}: ${err.message}${data}`;
   }
   if (
+    err instanceof RpcAmbiguousEndpointError ||
     err instanceof RpcHttpError ||
     err instanceof RpcNonJsonResponseError ||
     err instanceof RpcTimeoutError ||

@@ -188,6 +188,7 @@ exits zero; complete failure exits nonzero.
 
 The client library exposes typed failures:
 
+- `RpcAmbiguousEndpointError`
 - `RpcHttpError`
 - `RpcProtocolError`
 - `RpcNonJsonResponseError`
@@ -197,10 +198,13 @@ The client library exposes typed failures:
 - `RpcAbortError`
 - `BridgeCompatibilityError`
 
-`RpcTransportError` also identifies the selected `transport`, safe endpoint
-description, and underlying error `code`. When `TOOL_CLI_SOCKET` is set, missing,
-refused, and inaccessible socket diagnostics name the socket path without
-printing the bearer token.
+`RpcAmbiguousEndpointError` is a specialized `RpcTransportError` raised before
+any request when a non-empty `TOOL_CLI_SOCKET` appears with a non-empty
+`TOOL_CLI_HOST` or `TOOL_CLI_PORT`. It reports the socket path and conflicting
+environment-variable names, never the bearer token. Other `RpcTransportError`
+instances identify the selected `transport`, safe endpoint description, and
+underlying error `code`. Missing, refused, and inaccessible socket diagnostics
+name the socket path without printing the bearer token.
 
 ### Timeouts and cancellation
 
@@ -388,10 +392,15 @@ childEnv.TOOL_CLI_SOCKET = "/run/tool-cli/bridge.sock";
 childEnv.TOOL_CLI_TOKEN = token;
 ```
 
-`TOOL_CLI_SOCKET` takes precedence over `TOOL_CLI_HOST` and `TOOL_CLI_PORT`.
-In UDS mode, omit those TCP variables entirely. The socket pathname may differ
-between host and container because the client uses the mounted pathname from
-its own filesystem namespace.
+`TOOL_CLI_SOCKET` is mutually exclusive with explicit TCP selectors. If it is
+non-empty while `TOOL_CLI_HOST` or `TOOL_CLI_PORT` is also non-empty, the client
+fails before authentication or any network/socket request instead of guessing
+which bridge owns the token. Unset the TCP variables, or set them to empty
+strings when temporarily masking inherited values, before selecting UDS.
+Internal TCP defaults are used only when no socket is selected and do not count
+as explicit selectors. The socket pathname may differ between host and
+container because the client uses the mounted pathname from its own filesystem
+namespace.
 
 Maintainers with a local `node:22` container image can run the unprivileged,
 network-disabled mount smoke test with `npm run test:uds:docker`. The script
@@ -491,9 +500,11 @@ const { socketPath, token } = await server.startUnixSocket(
 ```
 
 Place the client-visible path in `TOOL_CLI_SOCKET` and the token in
-`TOOL_CLI_TOKEN`; do not inject `TOOL_CLI_HOST` or `TOOL_CLI_PORT`. The returned
-`StartResult` reports `transport: "tcp" | "unix"`, keeps `port` for backward
-compatibility (`0` in UDS mode), and includes `socketPath` in UDS mode.
+`TOOL_CLI_TOKEN`; clear `TOOL_CLI_HOST` and `TOOL_CLI_PORT`. Supplying either
+TCP selector together with the socket is rejected as ambiguous before a request
+is sent. The returned `StartResult` reports `transport: "tcp" | "unix"`, keeps
+`port` for backward compatibility (`0` in UDS mode), and includes `socketPath`
+in UDS mode.
 
 `ToolProvider` has three required methods:
 

@@ -40,6 +40,9 @@ describe("published documentation", () => {
 
   it("documents secure Unix socket transport without changing the package version", () => {
     expect(readme).toContain("TOOL_CLI_SOCKET");
+    expect(readme).toContain("RpcAmbiguousEndpointError");
+    expect(readme).toContain("fails before authentication");
+    expect(readme).toMatch(/set them to empty\s+strings/);
     expect(readme).toContain("0700");
     expect(readme).toContain("0600");
     expect(readme).toMatch(/no TCP\s+listener/);

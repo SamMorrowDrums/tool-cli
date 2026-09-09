@@ -36,6 +36,7 @@ import type {
   ToolProvider,
 } from "./provider.js";
 import {
+  RpcAmbiguousEndpointError,
   RpcAbortError,
   RpcTimeoutError,
   RpcTransportError,
@@ -74,6 +75,7 @@ interface Deferred<T> {
 }
 
 class UdsProvider implements ToolProvider {
+  bridgeInfoRequests = 0;
   readonly waitStarted = deferred<void>();
   readonly waitAborted = deferred<void>();
 
@@ -181,6 +183,7 @@ class UdsProvider implements ToolProvider {
   }
 
   getUpstreamMcpSummary() {
+    this.bridgeInfoRequests++;
     return {
       protocolVersion: "2025-06-18",
       implementation: { name: "uds-test-provider", version: "1.0.0" },
@@ -275,7 +278,7 @@ describe
       expect((await rawRpc(socketPath, started.token)).status).toBe(200);
     });
 
-    it("uses TOOL_CLI_SOCKET ahead of TCP host and port without a TCP request", async () => {
+    it("rejects an inherited socket when legacy mcpi-ext pins TCP", async () => {
       let tcpRequests = 0;
       const tcpServer = http.createServer((_req, res) => {
         tcpRequests++;
@@ -291,16 +294,34 @@ describe
         throw new Error("TCP trap did not bind");
       }
 
-      const { socketPath, started } = await startUds(new UdsProvider());
+      const parentProvider = new UdsProvider("parent");
+      const { socketPath, started } = await startUds(parentProvider);
       setRpcEnvironment(socketPath, started.token);
       process.env[HOST_ENV_VAR] = "127.0.0.1";
       process.env[PORT_ENV_VAR] = String(address.port);
 
-      const result = (await rpcCall("listServers")) as {
-        servers: { name: string }[];
-      };
-      expect(result.servers.map(({ name }) => name)).toEqual(["uds"]);
+      await expect(getBridgeInfo()).rejects.toSatisfy(
+        (error: unknown) =>
+          error instanceof RpcAmbiguousEndpointError &&
+          error.socketPath === socketPath &&
+          error.conflictingVariables.join(",") ===
+            `${HOST_ENV_VAR},${PORT_ENV_VAR}`,
+      );
+      expect(parentProvider.bridgeInfoRequests).toBe(0);
       expect(tcpRequests).toBe(0);
+    });
+
+    it("treats empty TCP variables as cleared in Unix socket mode", async () => {
+      const { socketPath, started } = await startUds(new UdsProvider());
+      setRpcEnvironment(socketPath, started.token);
+      process.env[HOST_ENV_VAR] = "";
+      process.env[PORT_ENV_VAR] = "";
+
+      const info = await getBridgeInfo();
+      expect(info.capabilities.transport).toEqual({
+        type: "unix",
+        networkListener: false,
+      });
     });
 
     it("propagates caller cancellation and timeouts to the provider", async () => {

@@ -45,7 +45,7 @@ export function resolveToken(): string | undefined {
   return process.env[TOKEN_ENV_VAR] || undefined;
 }
 
-/** Resolve the preferred client Unix socket path, or undefined for TCP. */
+/** Resolve the configured client Unix socket path, or undefined for TCP. */
 export function resolveSocketPath(): string | undefined {
   return process.env[SOCKET_ENV_VAR] || undefined;
 }

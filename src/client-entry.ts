@@ -1,6 +1,7 @@
 // Client-side: RPC client + constants
 export {
   BridgeCompatibilityError,
+  RpcAmbiguousEndpointError,
   RpcAbortError,
   RpcHttpError,
   RpcInvalidResponseError,

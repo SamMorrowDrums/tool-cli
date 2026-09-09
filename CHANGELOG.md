@@ -8,16 +8,18 @@ All notable changes to this project will be documented in this file.
 
 - Added opt-in Unix-domain-socket transport through
   `ToolCliServer.startUnixSocket(socketPath)` and the client-side
-  `TOOL_CLI_SOCKET` variable. UDS takes precedence over TCP host/port settings
-  while preserving bearer authentication, bridge-v1 handshakes, typed errors,
-  finite timeouts, cancellation, exact schemas, and lossless tool/resource
-  output.
+  `TOOL_CLI_SOCKET` variable. A socket selector combined with an explicit TCP
+  host or port is rejected before any request with a typed
+  `RpcAmbiguousEndpointError`, preventing inherited credentials from silently
+  selecting another session's bridge. Bearer authentication, bridge-v1
+  handshakes, finite timeouts, cancellation, exact schemas, and lossless
+  tool/resource output are preserved.
 - Added secure socket publication and lifecycle handling: dedicated parents are
   mode `0700`, sockets are mode `0600`, only owned and verified stale sockets
   are reclaimed, unsafe traversal/symlink/foreign paths are refused, and public
   socket cleanup cannot clobber a replacement filesystem entry.
 - Added Linux coverage for UDS authentication, protocol negotiation, tools,
-  resources and binary output, cancellation/timeouts, TCP precedence and
+  resources and binary output, cancellation/timeouts, endpoint ambiguity and TCP
   compatibility, permissions, concurrent sessions, stale and active sockets,
   signal/close cleanup, mount-like child paths, and actionable diagnostics.
 - Documented and smoke-tested a rootless/rootful container ownership boundary:

@@ -21,6 +21,7 @@ export type {
 } from "./provider.js";
 export {
   BridgeCompatibilityError,
+  RpcAmbiguousEndpointError,
   RpcAbortError,
   RpcHttpError,
   RpcInvalidResponseError,
