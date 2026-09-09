@@ -193,6 +193,7 @@ async function main(): Promise<void> {
   } catch (err) {
     if (
       err instanceof RpcTransportError &&
+      err.transport !== "unix" &&
       (hasErrorCode(err, "ECONNREFUSED") ||
         err.message.includes("fetch failed"))
     ) {

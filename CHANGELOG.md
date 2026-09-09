@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- Added opt-in Unix-domain-socket transport through
+  `ToolCliServer.startUnixSocket(socketPath)` and the client-side
+  `TOOL_CLI_SOCKET` variable. UDS takes precedence over TCP host/port settings
+  while preserving bearer authentication, bridge-v1 handshakes, typed errors,
+  finite timeouts, cancellation, exact schemas, and lossless tool/resource
+  output.
+- Added secure socket publication and lifecycle handling: dedicated parents are
+  mode `0700`, sockets are mode `0600`, only owned and verified stale sockets
+  are reclaimed, unsafe traversal/symlink/foreign paths are refused, and public
+  socket cleanup cannot clobber a replacement filesystem entry.
+- Added Linux coverage for UDS authentication, protocol negotiation, tools,
+  resources and binary output, cancellation/timeouts, TCP precedence and
+  compatibility, permissions, concurrent sessions, stale and active sockets,
+  signal/close cleanup, mount-like child paths, and actionable diagnostics.
+- Documented and smoke-tested a rootless/rootful container ownership boundary:
+  rootful sandboxes use the mapped non-root session UID, drop all capabilities,
+  enable `no-new-privileges`, and retain `--network none`.
+
+### Changed
+
+- Bridge protocol metadata is now `1.1` and additively reports
+  `capabilities.transport.type` plus whether the bridge created a network
+  listener. The protocol major remains `1`.
+- The public package change is a backward-compatible feature and therefore
+  targets package version `1.1.0`. `package.json` remains at `1.0.3` until the
+  coordinated release is approved.
+
 ## 1.0.3
 
 ### Documentation

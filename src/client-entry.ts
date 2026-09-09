@@ -24,6 +24,7 @@ export {
 export type {
   BridgeInfo,
   BridgeRpcOperation,
+  BridgeTransport,
   UpstreamMcpSummary,
 } from "./protocol.js";
 export {
@@ -31,9 +32,11 @@ export {
   DEFAULT_TIMEOUT_MS,
   MAX_TIMEOUT_MS,
   PORT_ENV_VAR,
+  SOCKET_ENV_VAR,
   TIMEOUT_ENV_VAR,
   TOKEN_ENV_VAR,
   resolvePort,
+  resolveSocketPath,
   resolveTimeoutMs,
   resolveToken,
 } from "./constants.js";

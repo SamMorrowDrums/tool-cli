@@ -1,5 +1,6 @@
 // Re-export everything for convenience
 export { BridgeRpcError, ToolCliServer } from "./server.js";
+export { UnixSocketPathError } from "./unix-socket.js";
 export type {
   ServerInfo,
   ToolSummary,
@@ -43,6 +44,7 @@ export {
 export type {
   BridgeInfo,
   BridgeRpcOperation,
+  BridgeTransport,
   UpstreamMcpSummary,
 } from "./protocol.js";
 export {
@@ -50,9 +52,11 @@ export {
   DEFAULT_TIMEOUT_MS,
   MAX_TIMEOUT_MS,
   PORT_ENV_VAR,
+  SOCKET_ENV_VAR,
   TIMEOUT_ENV_VAR,
   TOKEN_ENV_VAR,
   resolvePort,
+  resolveSocketPath,
   resolveTimeoutMs,
   resolveToken,
   generateToken,

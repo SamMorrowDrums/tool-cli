@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { ToolCliServer } from "./server.js";
 import { RpcProtocolError, rpcCall } from "./rpc-client.js";
 import type { ToolProvider, ToolInfo, CallToolResult } from "./provider.js";
-import { PORT_ENV_VAR, TOKEN_ENV_VAR } from "./constants.js";
+import { PORT_ENV_VAR, SOCKET_ENV_VAR, TOKEN_ENV_VAR } from "./constants.js";
 import {
   BRIDGE_PROTOCOL_MAJOR,
   BRIDGE_PROTOCOL_VERSION,
@@ -56,8 +56,10 @@ describe("tool-cli server + client integration", () => {
   const provider = new MockProvider();
   const server = new ToolCliServer(provider);
   let token: string;
+  let port: number;
 
   beforeAll(async () => {
+    delete process.env[SOCKET_ENV_VAR];
     provider.addServer("test-server", [
       {
         name: "get_weather",
@@ -109,6 +111,9 @@ describe("tool-cli server + client integration", () => {
 
     const result = await server.start();
     token = result.token;
+    port = result.port;
+    expect(result.transport).toBe("tcp");
+    expect(result.socketPath).toBeUndefined();
     process.env[PORT_ENV_VAR] = String(result.port);
     process.env[TOKEN_ENV_VAR] = result.token;
   });
@@ -116,6 +121,7 @@ describe("tool-cli server + client integration", () => {
   afterAll(async () => {
     await server.stop();
     delete process.env[PORT_ENV_VAR];
+    delete process.env[SOCKET_ENV_VAR];
     delete process.env[TOKEN_ENV_VAR];
   });
 
@@ -174,6 +180,7 @@ describe("tool-cli server + client integration", () => {
           tools: { inputSchemaValidation: boolean };
           resources: { list: boolean; templates: boolean; read: boolean };
           cancellation: { providerAbortSignal: boolean };
+          transport: { type: string; networkListener: boolean };
         };
         upstreamMcp: {
           protocolVersion: string;
@@ -197,6 +204,10 @@ describe("tool-cli server + client integration", () => {
         read: false,
       });
       expect(result.capabilities.cancellation.providerAbortSignal).toBe(true);
+      expect(result.capabilities.transport).toEqual({
+        type: "tcp",
+        networkListener: true,
+      });
       expect(result.upstreamMcp).toMatchObject({
         protocolVersion: "2025-06-18",
         implementation: { name: "mock-harness", version: "9.1.0" },
@@ -219,7 +230,7 @@ describe("tool-cli server + client integration", () => {
 
   describe("start() returns port and token", () => {
     it("returns a valid port number", () => {
-      const port = server.getPort();
+      expect(server.getPort()).toBe(port);
       expect(port).toBeGreaterThan(0);
       expect(port).toBeLessThan(65536);
     });

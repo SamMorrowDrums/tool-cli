@@ -1,6 +1,6 @@
 export const BRIDGE_PROTOCOL_NAME = "tool-cli-bridge";
 export const BRIDGE_PROTOCOL_MAJOR = 1;
-export const BRIDGE_PROTOCOL_VERSION = "1.0";
+export const BRIDGE_PROTOCOL_VERSION = "1.1";
 
 export const SERVER_IMPLEMENTATION_NAME = "@sammorrowdrums/tool-cli";
 export const SERVER_IMPLEMENTATION_VERSION = "1.0.3";
@@ -17,6 +17,7 @@ export const BRIDGE_RPC_OPERATIONS = [
 ] as const;
 
 export type BridgeRpcOperation = (typeof BRIDGE_RPC_OPERATIONS)[number];
+export type BridgeTransport = "tcp" | "unix";
 
 export interface UpstreamMcpSummary {
   protocolVersion?: string;
@@ -32,7 +33,7 @@ export interface BridgeInfo {
   bridgeProtocol: {
     name: typeof BRIDGE_PROTOCOL_NAME;
     major: typeof BRIDGE_PROTOCOL_MAJOR;
-    version: typeof BRIDGE_PROTOCOL_VERSION;
+    version: string;
   };
   serverImplementation: {
     name: typeof SERVER_IMPLEMENTATION_NAME;
@@ -62,6 +63,10 @@ export interface BridgeInfo {
     };
     cancellation: {
       providerAbortSignal: true;
+    };
+    transport?: {
+      type: BridgeTransport;
+      networkListener: boolean;
     };
   };
   upstreamMcp?: UpstreamMcpSummary;

@@ -38,6 +38,19 @@ describe("published documentation", () => {
     expect(readme).toMatch(/unrelated\s+terminal/);
   });
 
+  it("documents secure Unix socket transport without changing the package version", () => {
+    expect(readme).toContain("TOOL_CLI_SOCKET");
+    expect(readme).toContain("0700");
+    expect(readme).toContain("0600");
+    expect(readme).toMatch(/no TCP\s+listener/);
+    expect(readme).toMatch(/socket.+token|token.+socket/is);
+    expect(readme).toContain("DAC_OVERRIDE");
+    expect(readme).toContain("--cap-drop ALL");
+    expect(readme).toContain("no-new-privileges");
+    expect(changelog).toContain("1.1.0");
+    expect(packageJson.version).toBe("1.0.3");
+  });
+
   it("keeps stale release framing out of published docs", () => {
     const publishedDocs = `${readme}\n${changelog}`;
     for (const stale of [
