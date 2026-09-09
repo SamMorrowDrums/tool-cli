@@ -328,6 +328,12 @@ Only an owned, verified stale socket is removed. The published socket is mode
 `0600`, is removed by `stop()` and normal termination signals, and is never
 blindly unlinked during close.
 
+The ownership and write-permission checks apply to **every ancestor**, not only
+the immediate `0700` parent. For example, `/tmp/tool-cli/session` is still
+refused when `/tmp/tool-cli` is mode `0775`, even if `session` is mode `0700`.
+Creating the dedicated session directory directly with `mkdtemp()` under the
+OS sticky temp directory is the reliable pattern used in the example above.
+
 While the server is running, the dedicated directory also contains a private
 mode-`0600` hard link named `.tc-*`. It reserves Node's internal close-time
 pathname so another session cannot occupy it; clients and container mounts must

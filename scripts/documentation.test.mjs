@@ -47,6 +47,9 @@ describe("published documentation", () => {
     expect(readme).toContain("DAC_OVERRIDE");
     expect(readme).toContain("--cap-drop ALL");
     expect(readme).toContain("no-new-privileges");
+    expect(readme).toContain("apply to **every ancestor**");
+    expect(readme).toContain("/tmp/tool-cli");
+    expect(readme).toContain("mkdtemp()");
     expect(changelog).toContain("1.1.0");
     expect(packageJson.version).toBe("1.0.3");
   });
